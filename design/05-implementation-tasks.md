@@ -1,6 +1,9 @@
-# 05 — DevLoop 实现任务清单 (v2: 最大化复用)
+# 05 — DevLoop 实现任务清单 (v3: 防护加固)
 
-> **变更**: v1 设计了 15 个新 Skill，v2 缩减为 6 个编排 Skill + 6 个脚本。设计→计划→构建→验证→调试全部委托已有 Skill。
+> **变更记录**:
+> - v1: 15 个新 Skill
+> - v2: 缩减为 6 个编排 Skill + 6 个脚本，全部委托已有 Skill
+> - v3 (当前): 门禁硬/软分离（防止空洞阻断）、基线需求用途限制（防止低质逆向污染下游）、阶段二插入 NFR 强制评估步骤（防止非功能需求断层）
 > **使用方式**: 每个任务直接交给 Claude Code 执行，运行验证命令确认通过后进入下一个。
 
 ---
@@ -38,18 +41,18 @@
 | 类型 | 名称 | 行数估算 | 说明 |
 |------|------|---------|------|
 | **编排 Skill** | `devloop-reverse` | ~150 行 | 阶段一总编排：设KB上下文 → 委托已有Skill → 记录状态 |
-| **编排 Skill** | `devloop-intake` | ~150 行 | 阶段二总编排：解析输入 → 查索引 → 委托brainstorming → 创建需求 |
+| **编排 Skill** | `devloop-intake` | ~180 行 | 阶段二总编排：解析输入 → 查索引 → NFR评估 → 委托brainstorming → 创建需求 |
 | **编排 Skill** | `devloop-build` | ~150 行 | 阶段三总编排：拉需求 → 委托brainstorming/writing-plans/sdd |
 | **编排 Skill** | `devloop-verify` | ~120 行 | 阶段四总编排：委托verification-before-completion/code-review/debugging |
 | **编排 Skill** | `devloop-loop` | ~80 行 | 阶段五总编排：扫描队列 → 路由 |
 | **编排 Skill** | `devloop-resume` | ~80 行 | 中断恢复：读状态 → 回上下文 → 继续 |
 | **脚本** | `comet-state` | ~200 行 | 状态管理（YAML读写） |
-| **脚本** | `devloop-guard` | ~150 行 | 门禁执行引擎 |
+| **脚本** | `devloop-guard` | ~200 行 | 门禁执行引擎（硬/软分离，硬门禁脚本判定 + 软门禁待办清单输出） |
 | **脚本** | `kb-drift-check` | ~100 行 | KB漂移检测 |
 | **脚本** | `kb-freshness-trigger` | ~120 行 | KB保鲜触发 |
 | **脚本** | `kb-trust-update` | ~80 行 | KB信任级别评估 |
 | **脚本** | `confirmation-queue` | ~100 行 | 确认队列管理 |
-| **模板** | 9 个 `.md` 文件 | ~50 行/个 | 产出物格式定义 |
+| **模板** | 10 个 `.md` 文件 | ~50 行/个 | 产出物格式定义（含 NFR 检查清单） |
 
 ---
 
@@ -84,24 +87,26 @@ echo "✅ T0.0 PASSED"  # 警告不阻塞，缺失项在后续任务中处理
 
 ### T0.1 — 创建目录结构 + 模板文件
 
-**目标**: 一次性创建所有目录和 9 个模板。
+**目标**: 一次性创建所有目录和 10 个模板（含基线需求用途限制声明、NFR 检查清单）。
 
 **实现**:
-1. 创建目录树: `knowledge-base/{architecture,modules,apis,data-models}`, `requirements/{baseline,in-progress,completed}`, `templates/`, `.comet/scripts/`
-2. 创建 9 个模板文件（每个带 frontmatter + `{{ }}` 占位符 + 底部变量清单）
+1. 创建目录树: `knowledge-base/{architecture,modules,apis,data-models}`, `requirements/{baseline,in-progress,completed}`, `templates/`, `.comet/scripts/`, `.comet/gate-results/`
+2. 创建 10 个模板文件（每个带 frontmatter + `{{ }}` 占位符 + 底部变量清单）
 3. 创建 `knowledge-base/.manifest.yaml`（初始 `modules: []`）
+4. **基线需求用途限制**: `templates/requirement-doc.md` 必须包含基线模式的条件块 — 当 `status == baseline` 时，渲染醒目的 `⚠️ AUTO-INFERRED BASELINE` 警告、`source: auto-inferred`、`usage_restriction: reference_only` 声明及含义
 
 **模板清单**:
 ```
 templates/
 ├── requirement-input.md         # 用户提交需求时填写
-├── requirement-doc.md           # 阶段二产出：统一需求文档
+├── requirement-doc.md           # 阶段二产出：统一需求文档（含基线模式警告块）
 ├── kb-module-overview.md        # 模块概述
 ├── kb-module-api.md             # API 文档
 ├── kb-module-data-model.md      # 数据模型
 ├── kb-module-business-logic.md  # 业务逻辑
 ├── kb-module-dependencies.md    # 依赖关系
 ├── impact-analysis.md           # 影响分析报告
+├── nfr-checklist.md             🆕 非功能需求强制评估清单
 ├── verification-checklist.md    # 验证检查清单
 └── kb-manifest.yaml             # KB 清单模板
 ```
@@ -109,15 +114,19 @@ templates/
 **验证**:
 ```bash
 for d in knowledge-base/{architecture,modules,apis,data-models} \
-         requirements/{baseline,in-progress,completed} templates .comet/scripts; do
+         requirements/{baseline,in-progress,completed} templates .comet/scripts .comet/gate-results; do
   test -d "$d" || { echo "FAIL: $d missing"; exit 1; }
 done
 for f in requirement-input requirement-doc kb-module-overview kb-module-api \
          kb-module-data-model kb-module-business-logic kb-module-dependencies \
-         impact-analysis verification-checklist; do
+         impact-analysis nfr-checklist verification-checklist; do
   test -s "templates/${f}.md" || { echo "FAIL: templates/${f}.md"; exit 1; }
   grep -q '{{.*}}' "templates/${f}.md" || { echo "FAIL: ${f}.md missing variables"; exit 1; }
 done
+# 基线需求模板必须包含用途限制声明
+grep -q 'AUTO-INFERRED BASELINE\|usage_restriction.*reference_only' templates/requirement-doc.md \
+  && echo "✅ 基线需求用途限制已嵌入模板" \
+  || { echo "❌ requirement-doc.md 缺少基线用途限制声明"; exit 1; }
 echo "✅ T0.1 PASSED"
 ```
 
@@ -157,32 +166,47 @@ test "$(.comet/scripts/comet-state get current_stage)" = "1" \
 
 ### T0.3 — 实现 devloop-guard 脚本 + 门禁配置
 
-**目标**: 门禁执行引擎 + 18 个门禁的完整配置。
+**目标**: 门禁执行引擎 + 18 个门禁的完整配置（硬/软门禁分离）。
 
 **实现**:
 1. 创建 `.comet/scripts/devloop-guard`（Bash）
 2. 创建 `.comet/guard-config.yaml`（18 个门禁，来自设计文档 7.3 节）
-3. 支持四种 `on_fail` 策略: `block_and_retry`, `warn_and_continue`, `reject`, `pause_for_human`
-4. 输出格式: `[PASS]`/`[WARN]`/`[FAIL]` + 详情，最终必须输出 `ALL CHECKS PASSED` 或列出失败项
+3. **硬/软门禁分离**: 每个门禁声明 `type: hard | soft | mixed`
+   - **hard**: 脚本自动判定（`test -f`、`grep -c`、退出码、字段计数）→ 可 BLOCK
+   - **软门禁判断规则**: 脚本先跑硬门禁，硬门禁全部通过后输出 `SOFT_GATES_PENDING` 信号；编排 Skill 收到此信号后委托 LLM agent 评估软门禁；LLM 评估结果以结构化 JSON 写入 `.comet/gate-results/soft-<gate-id>.json`
+   - **mixed**: 硬门禁脚本判定 + 软门禁 LLM 判定（硬=BLOCK，软=WARN）
+   - **软门禁核心约束**: soft 类型只能 WARN 不阻断
+4. 支持四种 `on_fail` 策略: `block_and_retry`, `warn_and_continue`, `reject`, `pause_for_human`
+5. 输出格式: `[PASS]`/`[WARN]`/`[FAIL]` + 详情，最终必须输出 `ALL CHECKS PASSED` 或列出失败项
+6. **软门禁结果文件**: 脚本输出软门禁检查清单到 `.comet/gate-results/soft-gates-pending.json`，编排 Skill 读取后逐个委托 LLM 评估
 
-**门禁清单**（18 个）:
+**门禁清单**（18 个，含硬/软分类）:
 ```
-G1.1 模块覆盖率      G1.2 KB条目完整性     G1.3 KB内部一致性
-G1.4 需求反向覆盖率   G1.5 阶段一总门禁
-G2.1 输入有效性      G2.2 KB上下文相关性    G2.3 影响分析完整性
-G2.4 需求文档结构     G2.5 阶段二总门禁
-G3.1 需求可构建性    G3.2 Design阶段质量    G3.3 Plan阶段质量
-G3.4 Build阶段质量
-G4.1 自动化验证      G4.2 代码审查         G4.3 修复循环限制
-G4.4 阶段四总门禁
-G5.1 闭环状态一致性
+G1.1 模块覆盖率 [hard]     G1.2 KB条目完整性 [hard]     G1.3 KB内部一致性 [mixed]
+G1.4 需求反向覆盖率 [hard]  G1.5 阶段一总门禁 [hard]
+G2.1 输入有效性 [hard]      G2.2 KB上下文相关性 [soft]    G2.3 影响分析完整性 [mixed]
+G2.4 需求文档结构 [hard]     G2.5 阶段二总门禁 [hard]
+G3.1 需求可构建性 [hard]    G3.2 Design阶段质量 [mixed]    G3.3 Plan阶段质量 [mixed]
+G3.4 Build阶段质量 [hard]
+G4.1 自动化验证 [hard]      G4.2 代码审查 [mixed]         G4.3 修复循环限制 [hard]
+G4.4 阶段四总门禁 [hard]
+G5.1 闭环状态一致性 [hard]
 ```
 
 **验证**:
 ```bash
 chmod +x .comet/scripts/devloop-guard
+# 检查所有门禁已定义
 .comet/scripts/devloop-guard list | grep -c "G[1-5]" | xargs -I{} test {} -ge 18 \
-  && echo "✅ T0.3 PASSED" || echo "❌ T0.3 FAILED"
+  && echo "✅ 门禁数量正确"
+# 检查硬/软分类
+.comet/scripts/devloop-guard list --type hard | grep -c "G" | xargs -I{} test {} -ge 12 \
+  && echo "✅ 硬门禁 >= 12"
+.comet/scripts/devloop-guard list --type soft,mixed | grep -c "G" | xargs -I{} test {} -ge 6 \
+  && echo "✅ 含软门禁 >= 6"
+# 验证软门禁禁止使用 BLOCK 级别阻断
+.comet/scripts/devloop-guard validate-config  # 确保 soft 门禁 on_fail != block_and_retry
+echo "✅ T0.3 PASSED"
 ```
 
 ---
@@ -304,22 +328,25 @@ echo "✅ T1.3 PASSED: 阶段一门禁完成"
 
 ### T2.1 — 创建 devloop-intake Skill
 
-**目标**: 阶段二编排 Skill。解析输入→查KB索引→影响分析→生成需求文档→门禁→等确认→提交。
+**目标**: 阶段二编排 Skill。解析输入→查KB索引→影响分析→NFR评估🆕→生成需求文档→门禁→等确认→提交。
 
 **复用**:
 | 调用 | 用途 |
 |------|------|
 | `codegraph_explore` (MCP) | 按关键词查 KB 索引 |
 | `brainstorming` | 影响分析（提供 KB 上下文作为输入） |
+| *(编排层逻辑)* 🆕 | 非功能需求强制评估（加载 `templates/nfr-checklist.md`） |
 | `openspec-propose` | 创建 OpenSpec Change（proposal.md + .comet.yaml） |
 | `comet-state` (T0.2) | checkpoint |
-| `devloop-guard` (T0.3) | 门禁 G2.1-G2.5 |
+| `devloop-guard` (T0.3) | 门禁 G2.1-G2.5（含 G2.3-NFR） |
 
 **新建逻辑**（薄编排层）:
 - 输入解析: 自然语言/用户故事/Bug报告 → 标准化结构（title, type, priority, description, acceptance_criteria）
 - 索引式 KB 加载: 关键词提取 → `.manifest.yaml` 查询 → Top-N 匹配 → 摘要层降级（token 预算控制）
 - 确认级别判定: 根据 type/priority/affected_modules 自动判定 Level 1/2/3（默认 Level 3）
-- 需求文档生成: 使用 `templates/requirement-doc.md` 模板，LLM 填充变量
+- **非功能需求强制评估 🆕**: 影响分析完成后，加载 `templates/nfr-checklist.md`，遍历 7 个维度（认证授权/输入校验/数据保护/速率限制/审计日志/性能/可访问性），根据需求特征判定触发条件，对触发维度生成补充验收标准，追加到影响分析报告和需求文档中
+- 需求文档生成: 使用 `templates/requirement-doc.md` 模板，LLM 填充变量（含 NFR 补充验收项）
+- 基线需求用途限制: 如果用到了 baseline 需求作为背景参考，必须标注 `usage_restriction: reference_only`
 - Git commit: `[devloop] stage:2 action:intake req:<id>`
 
 **产出**: `.claude/skills/devloop-intake/SKILL.md`
@@ -329,6 +356,7 @@ echo "✅ T1.3 PASSED: 阶段一门禁完成"
 test -s .claude/skills/devloop-intake/SKILL.md \
   && grep -q 'openspec-propose\|brainstorming' .claude/skills/devloop-intake/SKILL.md \
   && grep -q 'manifest.yaml\|关键词' .claude/skills/devloop-intake/SKILL.md \
+  && grep -q 'nfr-checklist\|非功能需求' .claude/skills/devloop-intake/SKILL.md \
   && echo "✅ T2.1 PASSED" || echo "❌ T2.1 FAILED"
 ```
 
@@ -705,18 +733,20 @@ T0.0                       T1.1──→T1.2──→T1.3       T3.1──→T3.
 │   │   ├── kb-freshness-trigger   🆕 保鲜触发
 │   │   ├── kb-trust-update        🆕 信任评估
 │   │   └── confirmation-queue     🆕 确认队列
-│   ├── guard-config.yaml          🆕 18个门禁定义
+│   ├── guard-config.yaml          🆕 18个门禁定义（硬/软分离）
+│   ├── gate-results/               🆕 软门禁 LLM 评估结果暂存
 │   └── loop-state.yaml            🆕 运行时状态（初始为空）
 │
-├── templates/                     🆕 9个产出物模板
+├── templates/                     🆕 10个产出物模板
 │   ├── requirement-input.md
-│   ├── requirement-doc.md
+│   ├── requirement-doc.md         # 含基线模式 AUTO-INFERRED 警告块
 │   ├── kb-module-overview.md
 │   ├── kb-module-api.md
 │   ├── kb-module-data-model.md
 │   ├── kb-module-business-logic.md
 │   ├── kb-module-dependencies.md
 │   ├── impact-analysis.md
+│   ├── nfr-checklist.md           🆕 非功能需求强制评估清单（7维度）
 │   └── verification-checklist.md
 │
 └── design/                        ✅ 已有（本次设计文档）
@@ -727,7 +757,7 @@ T0.0                       T1.1──→T1.2──→T1.3       T3.1──→T3.
 ```
 knowledge-base/
 ├── .manifest.yaml              # 模块索引（关键词/实体/API/token估算）
-├── .drift-report.yaml          # 漂移报告
+├── .drift-report.yaml          # 漂移报告（含 soft_gate_warnings 字段）
 ├── architecture/
 │   ├── overview.md             # 整体架构
 │   ├── components.md           # 组件拓扑

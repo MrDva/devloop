@@ -135,8 +135,16 @@ inferred_from:
   - src/auth/login.ts
   - src/auth/token.ts
 confidence: high
+source: auto-inferred
+usage_restriction: reference_only  # reference_only = 仅供参考，禁止作为新功能设计的强制约束
 created: 2026-06-27
 ---
+> ⚠️ **AUTO-INFERRED BASELINE** | confidence: high | source: code reverse-engineering
+>
+> This requirement was inferred from existing code implementation, NOT from original design documents or specifications. It may not reflect original design intent.
+>
+> **Usage restriction (`reference_only`)**: This baseline requirement serves as **documentation reference only**. It MUST NOT be used as a mandatory constraint when designing new features in Stage 3. If a new requirement conflicts with a baseline requirement, the baseline requirement gives way.
+
 # REQ-001: 核心认证功能
 
 ## 推断来源
@@ -150,6 +158,13 @@ created: 2026-06-27
 - Token 管理: JWT + Refresh Token
 ...
 ```
+
+**基线需求用途限制规则**:
+- 所有基线需求 frontmatter 必须包含 `source: auto-inferred` 和 `usage_restriction: reference_only`
+- `reference_only` 的含义：可以在阶段二影响分析时作为背景知识阅读，但不作为阶段三设计方案的强制约束
+- 如果新需求与基线需求冲突，以新需求为准（基线需求不能否决新设计）
+- 门禁 G2.4 检查 `source` 和 `usage_restriction` 字段存在性
+- 门禁 G3.2 检查设计方案未将 `usage_restriction: reference_only` 的需求作为强制约束
 
 **门禁 G1.4** — 需求覆盖率:
 - 规则: 每个模块至少被 1 个需求覆盖
@@ -180,13 +195,14 @@ git commit -m "[devloop] stage:1 action:reverse complete:$(date)"
 ### 2.1 总编排 Skill: `devloop-intake`
 
 ```
-devloop-intake (🆕 编排 Skill，~150 行)
+devloop-intake (🆕 编排 Skill，~180 行)
 ├── 2.1 输入解析        → (编排层逻辑) 🆕
 ├── 2.2 KB 上下文加载   → codegraph_explore ✅ 已有 (MCP) + (索引逻辑) 🆕
 ├── 2.3 影响分析        → brainstorming ✅ 已有
-├── 2.4 需求文档生成    → openspec-propose ✅ 已有
-├── 2.5 门禁校验        → devloop-guard 🆕 (T0.3)
-├── 2.6 Git 提交        → git (Bash) ✅ 已有
+├── 2.4 非功能需求评估  → nfr-checklist 模板 🆕 （强制步骤，不可跳过）
+├── 2.5 需求文档生成    → openspec-propose ✅ 已有
+├── 2.6 门禁校验        → devloop-guard 🆕 (T0.3)
+├── 2.7 Git 提交        → git (Bash) ✅ 已有
 └── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
@@ -279,9 +295,84 @@ related_modules: []
 - 规则: 必须包含 `涉及模块`、`数据模型变更`、`API变更` 三部分
 - 规则: 如果涉及模块 > 3，必须有 `风险` 评估
 
-#### 2.2.4 需求文档生成
+#### 2.2.4 非功能需求强制评估 🆕
 
-调用 `openspec-propose` 生成正式需求：
+> **设计动机**: 安全/性能/可访问性/合规等非功能需求无法从代码逆向推断（代码记录实现而非约束意图）。KB 对这些维度天然沉默，下游 LLM 会将沉默解读为「不需要」。此步骤在所有需求摄入时强制执行，不依赖 KB 内容。
+
+**输入**: 影响分析报告 + 需求类型/优先级 + `templates/nfr-checklist.md`
+**产出**: 影响分析报告的「非功能需求评估」章节
+
+**评估维度**（`templates/nfr-checklist.md` 定义的强制检查清单）:
+
+| 维度 | 触发条件 | 必须产出的内容 |
+|------|---------|--------------|
+| **认证/授权 (AuthN/Z)** | `type ∈ [feature, enhancement]` 且涉及用户操作 | 需要的权限级别（匿名/登录/角色）、新增权限点 |
+| **输入校验 (Validation)** | 涉及 API 变更或数据模型变更 | 每个新字段的类型/范围/长度约束、SQL 注入/XSS 防护要求 |
+| **数据保护 (Data Privacy)** | 涉及用户数据或 `type ∉ [chore]` | 敏感字段（PII/密码/Token）的存储/传输/日志脱敏策略 |
+| **速率限制 (Rate Limiting)** | 涉及新 API 端点 | 是否需要限流、限流粒度（用户级/IP级） |
+| **审计日志 (Audit)** | `priority ∈ [high, medium]` 或涉及资金/权限操作 | 需要记录的操作类型、日志中禁止包含的字段 |
+| **性能 (Performance)** | `type = feature` 且涉及数据查询 | 预期数据量级、是否需要分页/缓存/异步 |
+| **可访问性 (Accessibility)** | 涉及前端 UI 变更 | WCAG 级别要求、键盘导航/屏幕阅读器支持 |
+
+**评估流程**:
+```
+1. 加载 templates/nfr-checklist.md
+2. 根据需求的 type/priority/涉及模块，判定每个维度的触发条件
+3. 对触发的每个维度:
+   a. 分析当前需求描述中是否已覆盖该约束
+   b. 如未覆盖 → 生成具体的补充验收标准
+   c. 如已覆盖 → 标记 ✅ 并引用原文位置
+4. 汇总为「非功能需求评估」章节，追加到影响分析报告末尾
+5. 将每个触发的维度对应的验收标准注入需求文档的「验收标准」部分
+```
+
+**评估产出示例**:
+```markdown
+## 非功能需求评估
+
+> 根据 `templates/nfr-checklist.md` 强制执行，评估时间: 2026-06-27T10:30:00Z
+
+### 认证/授权
+- 触发: ✅ (feature 类型 + 涉及用户操作)
+- 补充验收标准:
+  - [ ] OAuth2 回调接口不需要登录态（匿名访问），但需验证 state 参数防 CSRF
+  - [ ] 已有登录接口需增加 OAuth2 选项，保持现有认证逻辑不变
+
+### 输入校验
+- 触发: ✅ (涉及 API 变更)
+- 补充验收标准:
+  - [ ] OAuth2 authorization code 长度限制 ≤ 1024 字符
+  - [ ] redirect_uri 必须白名单校验，防止开放重定向
+
+### 数据保护
+- 触发: ✅ (涉及用户数据)
+- 补充验收标准:
+  - [ ] oauth_token 和 oauth_uid 存储时加密（AES-256-GCM）
+  - [ ] 日志中不得输出完整的 oauth_token（仅记录前8字符哈希）
+
+### 速率限制
+- 触发: ✅ (新增 API 端点)
+- 补充验收标准:
+  - [ ] POST /api/auth/oauth2/callback 每 IP 每分钟 ≤ 10 次
+
+### 审计日志
+- 触发: ✅ (priority=high + 涉及认证操作)
+- 补充验收标准:
+  - [ ] 记录每次 OAuth2 登录事件（用户ID、provider、时间戳、IP）
+  - [ ] 日志中禁止包含 oauth_token 和 oauth_uid 明文
+```
+
+**门禁 G2.3-NFR** — NFR 评估完整性（追加到 G2.3 hard checks）:
+- 规则: 影响分析报告必须包含「非功能需求评估」章节
+- 规则: 所有触发条件满足的维度，都必须在需求文档的「验收标准」中有对应的 checklist 项
+- 规则: 未触发的维度必须注明「不适用」及原因（一句即可）
+- 失败动作: block_and_retry（触发补充评估）
+
+**不适用声明**: 如果某个维度确实不适用，标注原因即可通过——不要求无意义的填表。例如 `type: chore` 且无 API 变更，可声明「NFR-输入校验: 不适用（chore，无 API 变更）」。
+
+#### 2.2.5 需求文档生成
+
+调用 `openspec-propose` 生成正式需求（原 2.2.4，编号因插入 NFR 步骤而后移）：
 
 ```
 openspec/changes/<change-name>/
@@ -312,17 +403,19 @@ updated: 2026-06-27
 ```
 
 **门禁 G2.4** — 需求文档结构:
-- 规则: frontmatter 包含所有必填字段
+- 规则: frontmatter 包含所有必填字段（含 `source` 和 `usage_restriction`）
 - 规则: 需求文档与 OpenSpec proposal.md 内容一致
 - 规则: `kb_context` 引用有效且不少于 2 个
+- 规则: 验收标准中包含了所有 NFR 评估触发的补充验收项
 
-#### 2.2.5 门禁汇总校验
+#### 2.2.6 门禁汇总校验
 
 **门禁 G2.5** — 阶段二总门禁:
 - [ ] G2.1: 输入有效性通过
 - [ ] G2.2: KB 上下文相关性通过（或标记 low confidence）
-- [ ] G2.3: 影响分析完整
-- [ ] G2.4: 需求文档结构正确
+- [ ] G2.3: 影响分析完整（hard checks 全部通过）
+- [ ] G2.3-NFR: 非功能需求评估完整（所有触发维度已产出验收标准）
+- [ ] G2.4: 需求文档结构正确（含 NFR 补充验收项）
 - [ ] 需求文档 frontmatter `status` 为 `proposed`
 - [ ] 无与已有需求的 ID 冲突
 
@@ -751,43 +844,212 @@ updated: {{ updated_date }}
 
 #### `guard-config.yaml`
 
+**门禁分类原则**：
+
+| 类型 | 判定方式 | 阻断权限 | 说明 |
+|------|---------|---------|------|
+| **硬门禁 (hard)** | 脚本自动判定（`test -f`、`grep -c`、退出码等） | 可 BLOCK | 事实性检查，不存在歧义 |
+| **软门禁 (soft)** | LLM 评估语义质量 | 仅 WARN | 语义判断有不确定性，不能作为阻断依据 |
+
 ```yaml
 # 门禁配置 — 可项目级覆盖
 gates:
   stage-1-reverse:
     - id: G1.1
       name: 模块覆盖率
-      rule: "modules_analyzed / total_modules >= 0.8"
-      on_fail: warn_and_continue  # 不阻断，但标记
+      type: hard                                    # 硬门禁：脚本数模块数，无歧义
+      checks:
+        - "modules_analyzed / total_modules >= 0.8"
+      on_fail: warn_and_continue
     - id: G1.2
       name: KB 条目完整性
-      rule: "all(module.has('overview.md') and module.has('api.md') for module in modules)"
+      type: hard                                    # 硬门禁：检查文件存在性
+      checks:
+        - "all(module.has('overview.md') for module in modules)"
+        - "all(module.has('api.md') for module in modules)"
       on_fail: block_and_retry
     - id: G1.3
       name: KB 内部一致性
-      rule: "all_refs_valid(kb_references)"
-      on_fail: block_and_retry
+      type: mixed
+      hard:                                         # 硬：检查交叉引用目标文件存在
+        - "all_wiki_link_targets_exist(knowledge-base/)"
+      soft:                                         # 软：引用内容语义是否匹配（LLM评估）
+        - "交叉引用指向的模块描述与引用上下文一致"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
     - id: G1.4
       name: 需求反向覆盖率
-      rule: "modules_covered_by_req / total_modules >= 0.9"
+      type: hard                                    # 硬门禁：数文件
+      checks:
+        - "modules_covered_by_req / total_modules >= 0.9"
       on_fail: warn_and_continue
     - id: G1.5
       name: 阶段一总门禁
-      rule: "all(G1.1.soft_pass, G1.2, G1.3, G1.4.soft_pass)"
-      on_fail: block_and_retry
+      type: hard                                    # 汇总门禁只看硬门禁结果
+      checks:
+        - "G1.2 = pass AND G1.3.hard = pass AND (G1.1.soft_pass OR G1.1 = pass)"
 
   stage-2-intake:
     - id: G2.1
       name: 输入有效性
-      rule: "input.title and input.description"
-      on_fail: reject  # 直接拒绝，不重试
-    # ... more gates
+      type: hard                                    # 硬：检查字段非空 + 枚举值
+      checks:
+        - "input.title 非空"
+        - "input.description 非空"
+        - "input.type ∈ [feature, bugfix, enhancement, refactor, chore]"
+      on_fail: reject
+
+    - id: G2.2
+      name: KB 上下文相关性
+      type: soft                                    # 软：语义匹配质量 LLM 判定
+      checks:
+        - "匹配到的 KB 模块至少 1 个"
+        - "匹配模块的关键词与需求描述语义相关"
+      on_fail: warn_and_continue                    # 软门禁只警告，新模块可能没有 KB
+
+    - id: G2.3
+      name: 影响分析完整性
+      type: mixed
+      hard:                                         # 硬：必须包含的章节存在
+        - "影响分析文档存在且非空"
+        - "包含 '涉及模块' 章节"
+        - "包含 'API变更' 或明确声明无变更"
+        - "包含 '数据模型变更' 或明确声明无变更"
+        - "包含 '非功能需求评估' 章节（由 NFR checklist 强制产出）"
+        - "所有 NFR 触发维度在需求文档验收标准中有对应 checklist 项"
+      soft:                                         # 软：章节内容质量（LLM评估）
+        - "涉及模块的分析深度足够（非一句话敷衍）"
+        - "API/数据模型变更描述具体到函数/字段级别"
+        - "NFR 评估各维度的补充验收标准具体可测（非泛泛而谈）"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G2.4
+      name: 需求文档结构
+      type: hard                                    # 硬：frontmatter 必填字段
+      checks:
+        - "frontmatter 包含 id, title, type, priority, status, module"
+        - "kb_context 引用至少 2 个（或声明理由为 new_module）"
+        - "需求文档内容与 openspec proposal.md 一致"
+      on_fail: block_and_retry
+
+    - id: G2.5
+      name: 阶段二总门禁
+      type: hard
+      checks:
+        - "G2.1 = pass AND G2.3.hard = pass AND G2.3-NFR = pass AND G2.4 = pass"
+
+  stage-3-build:
+    - id: G3.1
+      name: 需求可构建性
+      type: hard                                    # 硬：状态字段 + 文件存在
+      checks:
+        - "需求 status ∈ [proposed, designed, planned]"
+        - "需求 kb_context 中引用的所有文件仍然存在"
+      on_fail: block_and_retry                      # 不满足则跳过该需求
+
+    - id: G3.2
+      name: Design 阶段质量
+      type: mixed
+      hard:                                         # 硬：产物存在性
+        - "design.md 存在且非空"
+        - "delta spec 文件存在"
+        - "comet-guard 返回 ALL CHECKS PASSED"
+        - "设计方案未将任何 baseline 需求（usage_restriction: reference_only）作为强制约束"
+        - "如果设计方案与某个 baseline 需求冲突，已明确记录偏离理由"
+      soft:                                         # 软：设计质量（LLM评估）
+        - "设计方案不违反 architecture/overview.md 中的架构约束"
+        - "delta spec 覆盖了影响分析中的所有涉及模块"
+        - "API 契约变更与 KB 中记录的现有契约兼容或明确标注 breaking change"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G3.3
+      name: Plan 阶段质量
+      type: mixed
+      hard:
+        - "所有 task 有唯一编号"
+        - "每个 task 关联到具体的 spec delta"
+        - "无循环依赖（task 引用链无环）"
+      soft:
+        - "task 粒度合理（预估每个 task < 200 行变更）"
+        - "task 顺序符合依赖逻辑"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G3.4
+      name: Build 阶段质量
+      type: hard                                    # 硬：task 完成状态 + 测试结果
+      checks:
+        - "所有 task checkbox 已勾选"
+        - "测试覆盖率不低于变更前"
+        - "无 linter 错误"
+        - "devloop-guard build ALL CHECKS PASSED"
+      on_fail: block_and_retry
+
+  stage-4-verify:
+    - id: G4.1
+      name: 自动化验证
+      type: hard
+      checks:
+        - "所有测试通过（退出码=0）"
+        - "构建成功（退出码=0）"
+        - "Lint / Type Check 零错误（退出码=0）"
+      on_fail: block_and_retry
+
+    - id: G4.2
+      name: 代码审查
+      type: mixed
+      hard:
+        - "审查报告存在"
+        - "无 Critical 级别问题（通过审查输出计数判定）"
+      soft:                                         # 软：审查内容的充分性
+        - "审查覆盖了正确性/安全性/性能/可维护性/复用性五个维度"
+        - "审查意见有具体代码位置引用"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G4.3
+      name: 修复循环限制
+      type: hard
+      checks:
+        - "修复循环次数 < 3"
+        - "每次修复后不引入新的 Critical 问题"
+      on_fail: pause_for_human
+
+    - id: G4.4
+      name: 阶段四总门禁
+      type: hard
+      checks:
+        - "G4.1 = pass AND G4.2.hard = pass AND G4.3 未超限"
+        - "需求文档中的所有验收标准全部满足"
+        - "KB 一致性：代码变更未破坏 KB 中的 API 契约"
+        - "Git 状态干净（无未暂存变更）"
+
+  stage-5-loop:
+    - id: G5.1
+      name: 闭环状态一致性
+      type: hard
+      checks:
+        - "需求文档 frontmatter.status 与所在目录一致"
+        - "loop-state.yaml 中的 active_requirement 指向有效需求"
+        - "无孤儿需求（文档存在但未被任何索引引用）"
 
 # on_fail 动作说明:
 #   block_and_retry: 阻断流程，自动重试（最多3次）
 #   warn_and_continue: 记录警告，继续流程
 #   reject: 直接拒绝，返回给调用方
 #   pause_for_human: 暂停等待人工决策
+#
+# 软门禁规则:
+#   - soft 类型的门禁只能使用 warn_and_continue 或 pause_for_human
+#   - 使用 warn_and_continue 则记录到 .drift-report.yaml 的 soft_gate_warnings 字段
+#   - 软门禁警告在阶段总门禁汇总时展示，但不阻断流程
 ```
 
 ---
@@ -811,56 +1073,96 @@ gates:
 
 ### 7.2 门禁执行模型
 
+**两阶段执行**: 硬门禁先跑（脚本自动），全部通过后软门禁交给 LLM 评估。
+
 ```python
-# 伪代码: 门禁执行引擎
+# 伪代码: 门禁执行引擎（硬/软分离）
 def execute_gate(gate_config, context):
-    for attempt in range(gate_config.max_retries):
-        result = run_check(gate_config.rule, context)
-        if result.passed:
-            return GateResult(passed=True)
-        
-        action = gate_config.on_fail
-        if action == "block_and_retry" and attempt < gate_config.max_retries - 1:
-            context = auto_fix(gate_config, result)
-            continue
-        elif action == "warn_and_continue":
-            log_warning(gate_config.name, result)
-            return GateResult(passed=True, warnings=[result])
-        elif action == "reject":
-            return GateResult(passed=False, reason=result.message)
-        elif action == "pause_for_human":
-            human_decision = ask_user(result)
-            if human_decision == "override":
-                return GateResult(passed=True, overridden=True)
-            else:
-                return GateResult(passed=False)
-    
-    return GateResult(passed=False, reason="Max retries exceeded")
+    result = GateResult()
+
+    # === 第一阶段：硬门禁（脚本自动判定）===
+    if gate_config.type in ("hard", "mixed"):
+        hard_checks = gate_config.hard if gate_config.type == "mixed" else gate_config.checks
+        for check in hard_checks:
+            check_result = run_hard_check(check, context)
+            if not check_result.passed:
+                action = gate_config.on_fail if gate_config.type == "hard" else gate_config.on_fail["hard"]
+                if action == "block_and_retry":
+                    for attempt in range(3):
+                        context = auto_fix(gate_config, check_result)
+                        if run_hard_check(check, context).passed:
+                            break
+                    else:
+                        result.hard_failures.append(check_result)
+                        result.blocked = True
+                elif action == "reject":
+                    result.hard_failures.append(check_result)
+                    result.blocked = True
+                    return result  # reject 不重试
+                elif action == "warn_and_continue":
+                    result.warnings.append(check_result)
+                elif action == "pause_for_human":
+                    result.pending_human.append(check_result)
+
+    if result.blocked:
+        return result
+
+    # === 第二阶段：软门禁（LLM 语义评估）===
+    # 仅当硬门禁全部通过后才执行
+    if gate_config.type in ("soft", "mixed"):
+        soft_checks = gate_config.soft if gate_config.type == "mixed" else gate_config.checks
+        for check in soft_checks:
+            # 软门禁委托 LLM agent 评估，输出结构化结果
+            llm_result = llm_evaluate(check, context, schema=SOFT_GATE_SCHEMA)
+            if not llm_result.passed:
+                # 软门禁只能 WARN，不能 BLOCK
+                result.warnings.append(SoftGateWarning(
+                    gate=gate_config.id,
+                    check=check,
+                    reason=llm_result.reason,
+                    suggestion=llm_result.suggestion
+                ))
+
+    return result
+
+# 软门禁结构化输出 schema
+SOFT_GATE_SCHEMA = {
+    "passed": "boolean — 检查是否通过",
+    "reason": "string — 不通过的具体原因，引用具体文件位置",
+    "suggestion": "string — 修复建议"
+}
 ```
+
+**软门禁核心原则**:
+- 软门禁 NEVER 使用 `block_and_retry`，只能 `warn_and_continue` 或 `pause_for_human`
+- 软门禁警告写入 `knowledge-base/.drift-report.yaml` 的 `soft_gate_warnings` 字段
+- 阶段总门禁汇总时展示所有软门禁警告，但即使有警告也不阻断，仅提示用户关注
 
 ### 7.3 完整门禁矩阵
 
-| 阶段 | 门禁ID | 名称 | 类型 | 阻断级别 | 自动修复 |
-|------|--------|------|------|---------|---------|
-| 1 | G1.1 | 模块覆盖率 | 统计 | WARN | N |
-| 1 | G1.2 | KB条目完整性 | 结构 | BLOCK | Y |
-| 1 | G1.3 | KB内部一致性 | 引用 | BLOCK | Y |
-| 1 | G1.4 | 需求反向覆盖率 | 统计 | WARN | N |
-| 1 | G1.5 | 阶段一总门禁 | 汇总 | BLOCK | N |
-| 2 | G2.1 | 输入有效性 | 格式 | REJECT | N |
-| 2 | G2.2 | KB上下文相关性 | 语义 | WARN | N |
-| 2 | G2.3 | 影响分析完整性 | 结构 | BLOCK | Y |
-| 2 | G2.4 | 需求文档结构 | 格式 | BLOCK | Y |
-| 2 | G2.5 | 阶段二总门禁 | 汇总 | BLOCK | N |
-| 3 | G3.1 | 需求可构建性 | 前置 | BLOCK | N |
-| 3 | G3.2 | Design阶段质量 | 过程 | BLOCK | N |
-| 3 | G3.3 | Plan阶段质量 | 过程 | BLOCK | Y |
-| 3 | G3.4 | Build阶段质量 | 过程 | BLOCK | Y |
-| 4 | G4.1 | 自动化验证 | 测试 | BLOCK | Y |
-| 4 | G4.2 | 代码审查 | 审查 | BLOCK | Y |
-| 4 | G4.3 | 修复循环限制 | 过程 | PAUSE | N |
-| 4 | G4.4 | 阶段四总门禁 | 汇总 | BLOCK | N |
-| 5 | G5.1 | 闭环状态一致性 | 状态 | BLOCK | Y |
+| 阶段 | 门禁ID | 名称 | 类型 | 判定方式 | 阻断级别 | 自动修复 |
+|------|--------|------|------|---------|---------|---------|
+| 1 | G1.1 | 模块覆盖率 | hard | 脚本（计数） | WARN | N |
+| 1 | G1.2 | KB条目完整性 | hard | 脚本（文件存在） | BLOCK | Y |
+| 1 | G1.3 | KB内部一致性 | mixed | hard:脚本(引用目标存在) / soft:LLM(语义匹配) | hard=BLOCK, soft=WARN | Y(hard) |
+| 1 | G1.4 | 需求反向覆盖率 | hard | 脚本（计数） | WARN | N |
+| 1 | G1.5 | 阶段一总门禁 | hard | 汇总硬门禁结果 | BLOCK | N |
+| 2 | G2.1 | 输入有效性 | hard | 脚本（字段/枚举） | REJECT | N |
+| 2 | G2.2 | KB上下文相关性 | soft | LLM（语义匹配） | WARN | N |
+| 2 | G2.3 | 影响分析完整性 | mixed | hard:脚本(章节存在) / soft:LLM(内容质量+安全维度) | hard=BLOCK, soft=WARN | Y(hard) |
+| 2 | G2.4 | 需求文档结构 | hard | 脚本（frontmatter字段） | BLOCK | Y |
+| 2 | G2.5 | 阶段二总门禁 | hard | 汇总硬门禁结果 | BLOCK | N |
+| 3 | G3.1 | 需求可构建性 | hard | 脚本（状态+文件存在） | BLOCK | N |
+| 3 | G3.2 | Design阶段质量 | mixed | hard:脚本(文件存在+guard) / soft:LLM(架构约束+契约兼容) | hard=BLOCK, soft=WARN | N |
+| 3 | G3.3 | Plan阶段质量 | mixed | hard:脚本(编号+依赖) / soft:LLM(粒度+顺序) | hard=BLOCK, soft=WARN | Y(hard) |
+| 3 | G3.4 | Build阶段质量 | hard | 脚本（task完成+测试+linter） | BLOCK | Y |
+| 4 | G4.1 | 自动化验证 | hard | 脚本（退出码） | BLOCK | Y |
+| 4 | G4.2 | 代码审查 | mixed | hard:脚本(报告存在+Critical计数) / soft:LLM(审查充分性) | hard=BLOCK, soft=WARN | Y(hard) |
+| 4 | G4.3 | 修复循环限制 | hard | 脚本（计数） | PAUSE | N |
+| 4 | G4.4 | 阶段四总门禁 | hard | 汇总硬门禁结果 | BLOCK | N |
+| 5 | G5.1 | 闭环状态一致性 | hard | 脚本（状态字段） | BLOCK | Y |
+
+> **类型说明**: `hard` = 脚本自动判定，事实性检查，可阻断；`soft` = LLM 语义评估，仅 WARN 不阻断；`mixed` = 包含 hard + soft 两层，分别使用各自阻断规则。
 
 ---
 
@@ -1079,7 +1381,7 @@ def save_checkpoint(stage, step, action, context):
 | T1 | **跨仓库需求**: 需求可能涉及多个代码仓库 | 阶段三需要跨仓库协调 | 🟡 待解决 | 引入 `repo-manifest.yaml`，定义多仓库拓扑 |
 | T2 | **KB 规模膨胀**: 大项目的 KB 可能超出 AI 上下文窗口 | 阶段二/三无法加载完整上下文 | ✅ 已解决 | 见第 14 节：细粒度模块拆分 + 索引式按需加载 |
 | T3 | **并发需求冲突**: 两个需求修改同一文件 | Git merge conflict | 🟡 已预留 | 见第 17 节：并发锁预留机制（仅预留设计，当前串行） |
-| T4 | **非功能需求**: 性能/安全/可访问性需求难以从代码逆向 | 阶段一遗漏非功能需求 | 🟡 待解决 | 添加非功能需求检查清单模板，阶段二强制评估 |
+| T4 | **非功能需求**: 性能/安全/可访问性需求难以从代码逆向 | 阶段一遗漏非功能需求 | ✅ 已解决 | 阶段二新增「非功能需求强制评估」步骤（2.2.4），加载 `templates/nfr-checklist.md` 遍历 7 个维度，触发条件驱动的补充验收标准生成 |
 | T5 | **测试代码的理解**: 测试代码本身也是知识来源 | 阶段一可能忽略测试中的隐含需求 | 🟡 待解决 | 将测试文件纳入逆向分析，提取用例作为验收标准 |
 | T6 | **外部依赖变化**: 第三方 API 变更影响项目 | KB 中的外部 API 描述过时 | ✅ 已解决 | 见第 16 节：Git 驱动的定时保鲜 + 外部依赖扫描 |
 
