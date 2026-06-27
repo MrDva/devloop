@@ -49,3 +49,4 @@ explorer/outputs/
 !.comet/scripts/
 !.comet/guard-config.yaml
 !.claude/skills/devloop-resume/
+!.claude/skills/devloop-build/
