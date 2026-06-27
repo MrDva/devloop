@@ -43,7 +43,7 @@ generated_from:
 
 | 模块 | 类型 | 职责 | 文件数 |
 |------|------|------|--------|
-| [[comet-scripts]] | utility | 状态管理 + 门禁引擎 | 3 |
+| [[comet-scripts]] | utility | 状态管理 + 门禁引擎 | 2 |
 | [[devloop-skills]] | service | 五阶段编排 + 工程能力 | 64 |
 | [[kb-templates]] | config | 产出物格式定义 | 11 |
 | [[design-docs]] | config | 系统设计规范 | 6 |
