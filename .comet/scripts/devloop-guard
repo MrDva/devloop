@@ -417,7 +417,10 @@ run_hard_check() {
           if [[ -n "$refs" ]]; then
             while IFS= read -r ref; do
               local target="${ref#\[\[}"; target="${target%\]\]}"
-              if [[ ! -f "$PROJECT_ROOT/knowledge-base/${target}" ]] && [[ ! -f "$PROJECT_ROOT/knowledge-base/modules/${target}.md" ]]; then
+              if [[ ! -f "$PROJECT_ROOT/knowledge-base/${target}" ]] && \
+                 [[ ! -f "$PROJECT_ROOT/knowledge-base/modules/${target}.md" ]] && \
+                 [[ ! -d "$PROJECT_ROOT/knowledge-base/modules/${target}" ]] && \
+                 [[ ! -d "$PROJECT_ROOT/knowledge-base/${target}" ]]; then
                 broken_count=$((broken_count + 1))
               fi
             done <<< "$refs"

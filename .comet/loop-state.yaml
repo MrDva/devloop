@@ -1,0 +1,23 @@
+# DevLoop 运行时状态
+# 自动生成，请勿手动编辑 — 使用 comet-state 命令操作
+devloop:
+  version: "1.0"
+  updated: "2026-06-27T06:26:12Z"
+  change_name: "devloop-stage1"
+  current_stage: "1"
+  current_step: "1.5"
+  active_requirement:
+    id: ""
+    title: ""
+    change_name: ""
+  checkpoint:
+    stage: "1"
+    step: "1.5"
+    last_action: "Gate validation complete: G1.1-G1.5 ALL CHECKS PASSED (5 hard gates passed, 0 failed)"
+    timestamp: "2026-06-27T06:26:12Z"
+    git_commit: "0f1de4f"
+  completed_steps: {}
+  gate_results: {}
+    G1.5: { passed: true, timestamp: "2026-06-27T06:26:12Z", message: "Stage-1 gates: 5/5 hard passed" }
+  pending_confirmations: []
+  errors: []
