@@ -33,25 +33,29 @@ Skill 的触发方式有两种：
   - `requirements/baseline/REQ-<NNN>-<slug>.md` -- 基线需求文档
 - **内部调用链**: Step1: codegraph_explore -> Step2: dispatching-parallel-agents -> Step3: LLM 整合 -> Step4: brainstorming -> Step5: devloop-guard -> Step6: git commit
 
-### devloop-intake
-- **触发**: DevLoop 阶段二入口
+### devloop-intake ⏳ (设计完成，SKILL.md 尚未创建)
+- **触发**: DevLoop 阶段二入口（设计目标，尚未实现）
 - **职责**: 需求确认与优先级排序。将 baseline requirements + 新需求统一评估，确定 Level 1/2/3 级别，计算 priority_score，制定执行计划
 - **前置依赖**: devloop-reverse 产物（KB + 基线需求）
+- **实现状态**: 待 Phase 2 实现，当前仅有设计文档
 
-### devloop-build
-- **触发**: DevLoop 阶段三入口
+### devloop-build ⏳ (设计完成，SKILL.md 尚未创建)
+- **触发**: DevLoop 阶段三入口（设计目标，尚未实现）
 - **职责**: 从 plan 开始执行实现。自动选择 build mode（subagent-driven-development / executing-plans），调度实现 agent，管理修复循环
 - **前置依赖**: devloop-intake 产物（plan.md, tasks.md）
+- **实现状态**: 待 Phase 3 实现，当前仅有设计文档
 
-### devloop-verify
-- **触发**: DevLoop 阶段四入口
+### devloop-verify ⏳ (设计完成，SKILL.md 尚未创建)
+- **触发**: DevLoop 阶段四入口（设计目标，尚未实现）
 - **职责**: 验证实现是否满足 spec，运行门禁，确认完备性
 - **前置依赖**: devloop-build 产物（实现的代码）
+- **实现状态**: 待 Phase 4 实现，当前仅有设计文档
 
-### devloop-loop
-- **触发**: DevLoop 阶段五入口
+### devloop-loop ⏳ (设计完成，SKILL.md 尚未创建)
+- **触发**: DevLoop 阶段五入口（设计目标，尚未实现）
 - **职责**: 决策是否进入下一轮 DevLoop 循环。如果有未覆盖需求或新的变更需求，回到 reverse 或 intake 阶段
 - **前置依赖**: devloop-verify 结果
+- **实现状态**: 待 Phase 4 实现，当前仅有设计文档
 
 ### devloop-resume
 - **触发**: 自动（会话重启检测到 loop-state.yaml）/ `/devloop resume`
