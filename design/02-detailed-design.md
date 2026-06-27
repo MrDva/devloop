@@ -21,13 +21,14 @@
 ### 1.1 总编排 Skill: `devloop-reverse`
 
 ```
-devloop-reverse
-├── 1.1 代码扫描        → codegraph_explore (MCP)
-├── 1.2 模块深度分析    → comet-knowledge (并行)
-├── 1.3 KB 汇总整合     → (编排层)
-├── 1.4 需求反向推断    → brainstorming
-├── 1.5 门禁校验        → devloop-guard reverse
-└── 1.6 Git 提交        → git (Bash)
+devloop-reverse (🆕 编排 Skill，~150 行)
+├── 1.1 代码扫描        → codegraph_explore (MCP) ✅ 已有
+├── 1.2 模块深度分析    → dispatching-parallel-agents ✅ 已有 (每个 agent 内部用 codegraph_node)
+├── 1.3 KB 汇总整合     → (编排层逻辑) 🆕
+├── 1.4 需求反向推断    → brainstorming ✅ 已有
+├── 1.5 门禁校验        → devloop-guard 🆕 (T0.3)
+├── 1.6 Git 提交        → git (Bash) ✅ 已有
+└── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
 ### 1.2 子步骤详解
@@ -68,9 +69,10 @@ codegraph_explore("列出项目的所有顶层模块和组件")
 
 > **细粒度拆分策略见第 14.2 节**: 单模块上下文控制在 < 50K tokens，超大模块进一步拆分为子模块。
 
-对每个模块并行调用 `comet-knowledge`:
+对每个模块并行调用，每个 agent 内部使用 `codegraph_node` (MCP) 获取模块符号信息：
 ```
-comet-knowledge --module <module-name> --path <module-path>
+# 通过 dispatching-parallel-agents 分派，每个 agent 处理一个模块
+# agent 内部: codegraph_node --file src/<module>/
 ```
 
 每个模块产出:
@@ -178,13 +180,14 @@ git commit -m "[devloop] stage:1 action:reverse complete:$(date)"
 ### 2.1 总编排 Skill: `devloop-intake`
 
 ```
-devloop-intake
-├── 2.1 输入解析        → (编排层)
-├── 2.2 KB 上下文加载   → codegraph_explore + Read
-├── 2.3 影响分析        → brainstorming
-├── 2.4 需求文档生成    → openspec-propose / comet-open
-├── 2.5 门禁校验        → devloop-guard intake
-└── 2.6 Git 提交        → git (Bash)
+devloop-intake (🆕 编排 Skill，~150 行)
+├── 2.1 输入解析        → (编排层逻辑) 🆕
+├── 2.2 KB 上下文加载   → codegraph_explore ✅ 已有 (MCP) + (索引逻辑) 🆕
+├── 2.3 影响分析        → brainstorming ✅ 已有
+├── 2.4 需求文档生成    → openspec-propose ✅ 已有
+├── 2.5 门禁校验        → devloop-guard 🆕 (T0.3)
+├── 2.6 Git 提交        → git (Bash) ✅ 已有
+└── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
 ### 2.2 子步骤详解
@@ -278,7 +281,7 @@ related_modules: []
 
 #### 2.2.4 需求文档生成
 
-调用 `comet-open` 或 `openspec-propose` 生成正式需求：
+调用 `openspec-propose` 生成正式需求：
 
 ```
 openspec/changes/<change-name>/
@@ -330,15 +333,18 @@ updated: 2026-06-27
 ### 3.1 总编排 Skill: `devloop-build`
 
 ```
-devloop-build
-├── 3.1 自动拉取需求    → git pull + 扫描
-├── 3.2 需求选取        → (编排层优先级算法)
-├── 3.3 Comet Design    → comet-design
-├── 3.4 Comet Plan      → writing-plans
-├── 3.5 Comet Build     → executing-plans / subagent-driven-development
-│   └── (每个 task)     → test-driven-development
-├── 3.6 门禁校验        → devloop-guard build
-└── 3.7 Git WIP Commit  → git (Bash)
+devloop-build (🆕 编排 Skill，~150 行)
+├── 3.1 自动拉取需求    → git pull + 扫描 🆕 (编排层逻辑)
+├── 3.2 需求选取        → (编排层优先级算法) 🆕
+├── 3.3 方案设计        → brainstorming ✅ 已有
+├── 3.4 实现计划        → writing-plans ✅ 已有
+├── 3.5 执行实现        → subagent-driven-development ✅ 已有 (大需求)
+│                       或 executing-plans ✅ 已有 (小需求)
+│   └── (每个 task)     → test-driven-development ✅ 已有 (被 sdd 内部调用)
+│   └── (每个 task)     → requesting-code-review ✅ 已有 (被 sdd 内部调用)
+├── 3.6 门禁校验        → devloop-guard 🆕 (T0.3)
+├── 3.7 Git WIP Commit  → git (Bash) ✅ 已有
+└── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
 ### 3.2 子步骤详解
@@ -378,14 +384,13 @@ final_score: priority_score + dependency_score
 
 #### 3.2.3 Comet Design
 
-加载 `comet-design` Skill:
+加载 `brainstorming` Skill（提供需求文档+KB上下文作为输入）:
 
 **步骤**:
 1. 加载需求文档 + KB 上下文
-2. 生成 handoff: `comet-handoff <name> design --write`
-3. 加载 brainstorming（如需要中等以上变更）
-4. 创建设计文档: `design.md` + delta spec
-5. 运行 guard: `comet-guard <name> design --apply`
+2. 加载 brainstorming（如需要中等以上变更）
+3. 创建设计文档: `design.md` + delta spec
+4. 运行 guard: `devloop-guard <name> design`
 
 **产物**:
 ```
@@ -400,7 +405,7 @@ openspec/changes/<change-name>/
 - [ ] Design Doc 存在且非空
 - [ ] Delta spec 定义了变更范围
 - [ ] 设计不违反 KB 中记录的架构约束
-- [ ] `comet-guard --apply` 返回 ALL CHECKS PASSED
+- [ ] `devloop-guard` 返回 ALL CHECKS PASSED
 
 **人工确认点 🔴**: Design 完成后暂停，等待用户确认设计方案。
 
@@ -458,7 +463,7 @@ openspec/changes/<change-name>/
 - [ ] 所有 task 的双审查通过（subagent 模式）
 - [ ] 测试覆盖率不低于变更前
 - [ ] 无 linter 错误
-- [ ] `comet-guard <name> build --apply` ALL CHECKS PASSED
+- [ ] `devloop-guard <name> build` ALL CHECKS PASSED
 
 ---
 
@@ -467,24 +472,25 @@ openspec/changes/<change-name>/
 ### 4.1 总编排 Skill: `devloop-verify`
 
 ```
-devloop-verify
-├── 4.1 自动化验证      → comet-verify
-├── 4.2 代码审查        → code-review
-├── 4.3 问题修复        → systematic-debugging (如需要)
-├── 4.4 门禁校验        → devloop-guard verify
-├── 4.5 提交合并        → git (Bash)
-└── 4.6 需求状态更新    → git mv + commit
+devloop-verify (🆕 编排 Skill，~120 行)
+├── 4.1 验证纪律        → verification-before-completion ✅ 已有
+├── 4.2 代码审查        → code-review ✅ 已有 (内置)
+├── 4.3 问题修复        → systematic-debugging ✅ 已有 (如需要)
+├── 4.4 收尾合并        → finishing-a-development-branch ✅ 已有
+├── 4.5 门禁校验        → devloop-guard 🆕 (T0.3)
+├── 4.6 提交+状态更新   → git (Bash) ✅ 已有
+└── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
 ### 4.2 子步骤详解
 
 #### 4.2.1 自动化验证
 
-加载 `comet-verify` Skill:
+加载 `verification-before-completion` Skill:
 
 ```
-comet-state scale <name>     # 确定验证级别
-comet-guard <name> verify    # 运行验证
+comet-state scale <name>        # 确定验证级别
+devloop-guard check stage-4     # 运行门禁 G4.1-G4.4
 ```
 
 **验证策略**: 聚焦输出正确性，不要求环境一致性。详见第 15 节。
@@ -924,7 +930,7 @@ devloop:
     - step: 3.3
       error: "Design guard failed: missing delta spec"
       resolved: true
-      resolution: "Re-ran comet-design with explicit spec delta"
+      resolution: "Re-ran brainstorming with explicit spec delta"
 ```
 
 ### 8.3 恢复流程
@@ -1164,8 +1170,8 @@ outputs:
 
 dependencies:
   skills:
-    - comet-knowledge
     - brainstorming
+    - dispatching-parallel-agents
   mcp_tools:
     - codegraph_explore
     - codegraph_node

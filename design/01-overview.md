@@ -82,11 +82,12 @@
 5. 提交至 Git (`/knowledge-base/` + `/requirements/baseline/`)
 
 **关键 Skill**:
-| Skill | 作用 | 产物 |
-|-------|------|------|
-| `comet-knowledge` | 知识提取编排 | KB 条目 |
-| CodeGraph MCP | 代码结构分析 | 符号依赖图 |
-| (新) `devloop-reverse` | 阶段一总编排 | 完整 KB + 基线需求 |
+| Skill | 作用 | 产物 | 来源 |
+|-------|------|------|------|
+| `codegraph_explore` (MCP) | 代码结构扫描 | 模块清单 + 符号依赖图 | ✅ 已有 |
+| `dispatching-parallel-agents` | 并行分析多个模块 | 各模块 KB 条目 | ✅ 已有 |
+| `brainstorming` | 从 KB 反推需求 | 基线需求文档 | ✅ 已有 |
+| `devloop-reverse` | 阶段一总编排 | 完整 KB + 基线需求 | 🆕 新建 |
 
 ### 3.2 阶段二：需求摄入 (Requirements Intake)
 
@@ -103,12 +104,12 @@
 6. 提交至 Git (`/requirements/in-progress/`)
 
 **关键 Skill**:
-| Skill | 作用 | 产物 |
-|-------|------|------|
-| `comet-open` | 开启 Change | `.comet.yaml` 初始化 |
-| `brainstorming` | 需求澄清与方案探讨 | brainstorm-summary.md |
-| `openspec-propose` | 创建正式 Proposal | proposal.md |
-| (新) `devloop-intake` | 阶段二总编排 | 完整需求文档 |
+| Skill | 作用 | 产物 | 来源 |
+|-------|------|------|------|
+| `brainstorming` | 影响分析（提供 KB 上下文作为输入） | 影响分析报告 | ✅ 已有 |
+| `openspec-propose` | 创建正式 Proposal | proposal.md + .comet.yaml | ✅ 已有 |
+| `codegraph_explore` (MCP) | 索引式 KB 查询 | 相关模块 KB 条目 | ✅ 已有 |
+| `devloop-intake` | 阶段二总编排 | 完整需求文档 | 🆕 新建 |
 
 ### 3.3 阶段三：代码生成 (Code Generation)
 
@@ -126,11 +127,12 @@
 **关键 Skill**:
 | Skill | 作用 | 产物 |
 |-------|------|------|
-| `comet-design` | 设计方案 | design.md, delta-spec |
-| `brainstorming` | 方案细化（如需要） | brainstorm-summary.md |
-| `writing-plans` | 创建实现计划 | plan.md, tasks.md |
-| `executing-plans` 或 `subagent-driven-development` | 执行实现 | 代码变更 |
-| `test-driven-development` | TDD 保障 | 测试用例 + 通过记录 |
+| `brainstorming` | 设计方案 | design.md | ✅ 已有 |
+| `writing-plans` | 创建实现计划 | plan.md, tasks.md | ✅ 已有 |
+| `subagent-driven-development` | 执行实现（大需求） | 代码变更 + 双审查 | ✅ 已有 |
+| `executing-plans` | 执行实现（小需求） | 代码变更 | ✅ 已有 |
+| `test-driven-development` | TDD 保障（被 sdd 内部调用） | 测试用例 | ✅ 已有 |
+| `devloop-build` | 阶段三总编排 | 完整代码变更 | 🆕 新建 |
 
 ### 3.4 阶段四：验证与交付 (Verification & Delivery)
 
@@ -149,10 +151,11 @@
 **关键 Skill**:
 | Skill | 作用 | 产物 |
 |-------|------|------|
-| `comet-verify` | Comet 验证流程 | 验证报告 |
-| `verification-before-completion` | 最终验证检查 | 检查清单 |
-| `code-review` | 代码质量审查 | Review 报告 |
-| `systematic-debugging` | 失败修复（如需要） | 根因分析 + 修复 |
+| `verification-before-completion` | 验证纪律（必须看到测试通过输出） | 验证结果 | ✅ 已有 |
+| `code-review` (内置) | 代码质量审查 | Review 报告 | ✅ 已有 |
+| `systematic-debugging` | 失败修复 | 根因分析 + 修复 | ✅ 已有 |
+| `finishing-a-development-branch` | 收尾合并 | 合并/PR | ✅ 已有 |
+| `devloop-verify` | 阶段四总编排 | 验证报告 + 需求状态更新 | 🆕 新建 |
 
 ### 3.5 阶段五：闭环回写 (Loop Back)
 
@@ -319,13 +322,14 @@ draft → proposed → designed → planned → building → verifying → compl
 
 | 层面 | 选型 | 说明 |
 |------|------|------|
-| 编排引擎 | Comet (OpenSpec + Superpowers) | 已有的阶段管理与 Skill 体系 |
-| 代码分析 | CodeGraph MCP | 符号级代码知识图谱 |
+| 编排引擎 | DevLoop Skill (薄编排层) | 6 个新建 Skill，~800 行总计，内部委托 14 个已有 Skill |
+| 代码分析 | CodeGraph MCP | 符号级代码知识图谱，直接调用不包 Skill |
 | AI 引擎 | Claude (via Claude Code) | 所有智能决策与生成 |
 | 版本控制 | Git | 所有产物存储 |
 | 状态存储 | YAML + Git | 流程状态持久化 |
 | 模板 | Markdown + `{{ }}` 占位符 | LLM 原生填充，无需独立模板引擎 |
-| 通知 | Git Hooks + Webhook | 事件通知 |
+| 设计→计划→构建→验证→调试 | 已有 Superpowers Skill | brainstorming, writing-plans, sdd, tdd, code-review, systematic-debugging 等（不重写） |
+| 门禁系统 | devloop-guard 脚本 | 新建，18 个门禁规则 |
 
 ---
 
