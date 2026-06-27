@@ -1,0 +1,48 @@
+# 1. 编译输出和依赖（这是最主要的）
+target/            # Maven 项目最常见的编译输出目录[reference:10][reference:11]
+build/             # Gradle 项目的编译输出目录[reference:12]
+bin/               # 一些 IDE 的默认编译输出目录[reference:13]
+*.class            # Java 编译后产生的字节码文件[reference:14][reference:15]
+
+# 2. IDE 特定配置（不同开发工具不应互相影响）
+.classpath         # Eclipse 项目配置文件[reference:16]
+.project           # Eclipse 项目配置文件[reference:17]
+.settings/         # Eclipse 项目配置目录[reference:18]
+.idea/             # IntelliJ IDEA 项目配置目录[reference:19]
+*.iml              # IntelliJ IDEA 模块文件[reference:20]
+.vscode/           # VS Code 的项目配置目录，除非团队统一使用[reference:21]
+
+# 3. 日志和临时文件
+*.log              # 日志文件[reference:22]
+*.tmp              # 临时文件[reference:23]
+hs_err_pid*        # JVM 崩溃日志文件[reference:24]
+
+# 4. 特定于 Maven / Gradle Wrapper 和本地文件
+/log/              # 通用日志目录[reference:25]
+/.mvn/             # Maven Wrapper 相关内容[reference:26]
+mvnw
+mvnw.cmd
+.mvn/wrapper/maven-wrapper.jar # Maven Wrapper JAR 包[reference:27]
+gradle-wrapper.jar # Gradle Wrapper JAR 包[reference:28]
+
+# 5. 操作系统和通用文件
+.DS_Store          # macOS 系统文件[reference:29]
+Thumbs.db          # Windows 缩略图缓存[reference:30]
+.env               # 本地环境变量配置[reference:31]
+
+uploads/
+target/
+data/
+./.cline/
+**/.clinerules/
+**/.comet/
+**/.cline/
+**/node_modules/
+**/.codegraph/
+**/.agents/
+**/.claude/
+package-lock.json
+package.json
+skills-lock.json
+# Explorer outputs
+explorer/outputs/

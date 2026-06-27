@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevLoop — 闭环开发系统交互式设计</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --yellow: #d2991d;
+    --red: #f85149;
+    --purple: #a371f7;
+    --orange: #d18616;
+    --stage1: #58a6ff;
+    --stage2: #3fb950;
+    --stage3: #a371f7;
+    --stage4: #f0883e;
+    --stage5: #f85149;
+    --radius: 8px;
+    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(12px);
+  }
+  .header h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header .subtitle { font-size: 0.85rem; color: var(--text-muted); }
+
+  /* Layout */
+  .app { display: grid; grid-template-columns: 1fr 360px; height: calc(100vh - 65px); }
+  .main { overflow-y: auto; padding: 24px; }
+  .sidebar {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  /* Loop visualization */
+  .loop-container {
+    position: relative;
+    width: 600px;
+    height: 600px;
+    margin: 0 auto;
+  }
+  .loop-svg { width: 100%; height: 100%; }
+
+  .stage-node {
+    cursor: pointer;
+    transition: transform 0.2s, filter 0.2s;
+  }
+  .stage-node:hover { transform: scale(1.08); filter: brightness(1.2); }
+  .stage-node.active { filter: brightness(1.3) drop-shadow(0 0 8px currentColor); }
+
+  /* Detail panel */
+  .detail-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-top: 24px;
+    display: none;
+  }
+  .detail-panel.visible { display: block; }
+  .detail-panel h3 {
+    font-size: 1.1rem;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .detail-panel h3 .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  /* Skill chain */
+  .skill-chain {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--bg);
+    border-radius: var(--radius);
+  }
+  .skill-chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .skill-chip.primary { background: var(--accent); color: #fff; }
+  .skill-chip.secondary { background: var(--border); color: var(--text); }
+  .skill-chip.gate { background: var(--yellow); color: #000; }
+  .skill-arrow { color: var(--text-muted); font-size: 0.8rem; }
+
+  /* Gate table */
+  .gate-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 0.85rem; }
+  .gate-table th { text-align: left; padding: 8px 12px; background: var(--bg); color: var(--text-muted); font-weight: 500; }
+  .gate-table td { padding: 8px 12px; border-top: 1px solid var(--border); }
+  .gate-pass { color: var(--green); }
+  .gate-fail { color: var(--red); }
+  .gate-warn { color: var(--yellow); }
+
+  /* State machine */
+  .state-machine { margin-top: 16px; }
+  .state-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    padding: 8px;
+    font-size: 0.8rem;
+  }
+  .state-badge {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .state-badge.draft { background: var(--text-muted); color: #fff; }
+  .state-badge.proposed { background: var(--accent); color: #fff; }
+  .state-badge.designed { background: var(--purple); color: #fff; }
+  .state-badge.planned { background: var(--orange); color: #fff; }
+  .state-badge.building { background: var(--orange); color: #fff; }
+  .state-badge.built { background: var(--green); color: #fff; }
+  .state-badge.verifying { background: var(--yellow); color: #000; }
+  .state-badge.completed { background: var(--green); color: #fff; }
+  .state-badge.blocked { background: var(--red); color: #fff; }
+
+  /* Template viewer */
+  .template-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 12px; }
+  .template-tab {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+  }
+  .template-tab:hover { border-color: var(--accent); }
+  .template-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .template-content {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+
+  /* Flow diagram toggle */
+  .toggle-group { display: flex; gap: 4px; margin: 12px 0; }
+  .toggle-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+  }
+  .toggle-btn:hover { border-color: var(--accent); }
+  .toggle-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* Simulation */
+  .sim-controls { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+  .sim-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+  .sim-btn.run { background: var(--green); color: #fff; }
+  .sim-btn.reset { background: var(--border); color: var(--text); }
+  .sim-btn.step { background: var(--accent); color: #fff; }
+  .sim-log {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    max-height: 250px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 0.75rem;
+    margin-top: 12px;
+  }
+  .sim-log .entry { padding: 3px 0; border-bottom: 1px solid rgba(48,54,61,0.5); }
+  .sim-log .entry.stage1 { color: var(--stage1); }
+  .sim-log .entry.stage2 { color: var(--stage2); }
+  .sim-log .entry.stage3 { color: var(--stage3); }
+  .sim-log .entry.stage4 { color: var(--stage4); }
+  .sim-log .entry.stage5 { color: var(--stage5); }
+  .sim-log .entry.gate { color: var(--yellow); }
+  .sim-log .entry.human { color: var(--red); }
+
+  .sim-progress {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 8px 0;
+  }
+  .sim-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: all 0.3s;
+  }
+  .sim-dot.done { background: var(--green); }
+  .sim-dot.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1s infinite; }
+  .sim-dot.fail { background: var(--red); }
+  .sim-line { flex: 1; height: 2px; background: var(--border); min-width: 16px; }
+  .sim-line.done { background: var(--green); }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.3); }
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { border-left: none; border-top: 1px solid var(--border); }
+    .loop-container { width: 100%; height: auto; }
+  }
+
+  /* Section titles */
+  .section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 20px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    pointer-events: none;
+    box-shadow: var(--shadow);
+    z-index: 50;
+    max-width: 280px;
+  }
+
+  /* Code */
+  code {
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <h1>🔄 DevLoop</h1>
+    <span class="subtitle">Closed-Loop Development System — 交互式设计总览</span>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button class="toggle-btn active" onclick="switchView('loop')">闭环全景</button>
+    <button class="toggle-btn" onclick="switchView('flowchart')">详细流程</button>
+    <button class="toggle-btn" onclick="switchView('statemachine')">需求状态机</button>
+    <button class="toggle-btn" onclick="switchView('templates')">模板预览</button>
+    <button class="toggle-btn" onclick="switchView('simulation')">流程模拟</button>
+  </div>
+</div>
+
+<!-- App -->
+<div class="app">
+  <!-- Main content -->
+  <div class="main" id="mainContent">
+    <!-- Loop View -->
+    <div id="view-loop">
+      <div class="loop-container">
+        <svg class="loop-svg" viewBox="0 0 600 600" id="loopSvg">
+          <defs>
+            <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+              <polygon points="0 0, 10 3.5, 0 7" fill="#8b949e"/>
+            </marker>
+          </defs>
+
+          <!-- Background circle -->
+          <circle cx="300" cy="300" r="220" fill="none" stroke="var(--border)" stroke-width="1" stroke-dasharray="6,4"/>
+
+          <!-- Knowledge Base center -->
+          <g transform="translate(300,300)" style="cursor:pointer" onclick="selectStage('kb')">
+            <rect x="-60" y="-25" width="120" height="50" rx="25" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
+            <text x="0" y="5" text-anchor="middle" fill="var(--accent)" font-size="13" font-weight="600">知识库 KB</text>
+          </g>
+
+          <!-- Stage 1 -->
+          <g transform="translate(300,60)" class="stage-node" id="node-s1" onclick="selectStage(1)">
+            <circle cx="0" cy="0" r="40" fill="var(--surface)" stroke="var(--stage1)" stroke-width="2.5"/>
+            <text x="0" y="-6" text-anchor="middle" fill="var(--stage1)" font-size="20">①</text>
+            <text x="0" y="16" text-anchor="middle" fill="var(--text)" font-size="11">逆向分析</text>
+          </g>
+
+          <!-- Stage 2 -->
+          <g transform="translate(520,200)" class="stage-node" id="node-s2" onclick="selectStage(2)">
+            <circle cx="0" cy="0" r="40" fill="var(--surface)" stroke="var(--stage2)" stroke-width="2.5"/>
+            <text x="0" y="-6" text-anchor="middle" fill="var(--stage2)" font-size="20">②</text>
+            <text x="0" y="16" text-anchor="middle" fill="var(--text)" font-size="11">需求摄入</text>
+          </g>
+
+          <!-- Stage 3 -->
+          <g transform="translate(300,540)" class="stage-node" id="node-s3" onclick="selectStage(3)">
+            <circle cx="0" cy="0" r="40" fill="var(--surface)" stroke="var(--stage3)" stroke-width="2.5"/>
+            <text x="0" y="-6" text-anchor="middle" fill="var(--stage3)" font-size="20">③</text>
+            <text x="0" y="16" text-anchor="middle" fill="var(--text)" font-size="11">代码生成</text>
+          </g>
+
+          <!-- Stage 4 -->
+          <g transform="translate(80,200)" class="stage-node" id="node-s4" onclick="selectStage(4)">
+            <circle cx="0" cy="0" r="40" fill="var(--surface)" stroke="var(--stage4)" stroke-width="2.5"/>
+            <text x="0" y="-6" text-anchor="middle" fill="var(--stage4)" font-size="20">④</text>
+            <text x="0" y="16" text-anchor="middle" fill="var(--text)" font-size="11">验证交付</text>
+          </g>
+
+          <!-- Stage 5: loop arrow -->
+          <g transform="translate(100,470)" class="stage-node" id="node-s5" onclick="selectStage(5)">
+            <rect x="-45" y="-22" width="90" height="44" rx="22" fill="var(--surface)" stroke="var(--stage5)" stroke-width="2"/>
+            <text x="0" y="5" text-anchor="middle" fill="var(--stage5)" font-size="13" font-weight="600">⑤ 闭环</text>
+          </g>
+
+          <!-- Arrows -->
+          <!-- S1 → KB -->
+          <line x1="290" y1="100" x2="290" y2="265" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <!-- KB → S2 -->
+          <line x1="355" y1="285" x2="475" y2="215" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <!-- S2 → S3 -->
+          <line x1="490" y1="240" x2="340" y2="500" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <!-- S3 → S4 -->
+          <line x1="260" y1="500" x2="120" y2="240" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <!-- S4 → S5 -->
+          <line x1="85" y1="250" x2="100" y2="440" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+          <!-- S5 → back (loop) -->
+          <path d="M 145 470 Q 200 500 300 500" fill="none" stroke="var(--stage5)" stroke-width="2" stroke-dasharray="6,4" marker-end="url(#arrowhead)"/>
+
+          <!-- Labels -->
+          <text x="270" y="185" fill="var(--text-muted)" font-size="10">KB生成</text>
+          <text x="385" y="240" fill="var(--text-muted)" font-size="10">加载KB</text>
+          <text x="400" y="385" fill="var(--text-muted)" font-size="10">拉取需求</text>
+          <text x="160" y="385" fill="var(--text-muted)" font-size="10">验证完成</text>
+          <text x="50" y="350" fill="var(--text-muted)" font-size="10">状态回写</text>
+          <text x="200" y="490" fill="var(--stage5)" font-size="10">下一需求</text>
+        </svg>
+      </div>
+
+      <!-- Detail Panel -->
+      <div class="detail-panel" id="detailPanel">
+        <div id="detailContent"></div>
+      </div>
+    </div>
+
+    <!-- Flowchart View -->
+    <div id="view-flowchart" style="display:none;">
+      <div class="section-title">阶段流程选择</div>
+      <div class="toggle-group" id="flowchartTabs">
+        <button class="toggle-btn active" onclick="showFlowchart('overall')">系统全景</button>
+        <button class="toggle-btn" onclick="showFlowchart('stage1')">阶段一: 逆向</button>
+        <button class="toggle-btn" onclick="showFlowchart('stage2')">阶段二: 摄入</button>
+        <button class="toggle-btn" onclick="showFlowchart('stage3')">阶段三: 生成</button>
+        <button class="toggle-btn" onclick="showFlowchart('stage4')">阶段四: 验证</button>
+        <button class="toggle-btn" onclick="showFlowchart('stage5')">阶段五: 闭环</button>
+        <button class="toggle-btn" onclick="showFlowchart('gates')">门禁决策树</button>
+        <button class="toggle-btn" onclick="showFlowchart('recovery')">中断恢复</button>
+      </div>
+      <div id="flowchartContent" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;overflow-x:auto;">
+        <p style="color:var(--text-muted);text-align:center;padding:40px;">Mermaid 流程图请参考 <a href="./03-flowcharts.md" style="color:var(--accent)">03-flowcharts.md</a></p>
+      </div>
+    </div>
+
+    <!-- State Machine View -->
+    <div id="view-statemachine" style="display:none;">
+      <div class="section-title">需求状态流转</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;">
+        <div class="state-machine">
+          <div class="state-row">
+            <span class="state-badge draft">draft</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge proposed">proposed</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge designed">designed</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge planned">planned</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge building">building</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge built">built</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge verifying">verifying</span><span style="color:var(--text-muted)">→</span>
+            <span class="state-badge completed">completed</span>
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;margin-top:16px;font-size:0.85rem;">
+          <thead>
+            <tr><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">状态</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">触发条件</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">对应阶段</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">Git 位置</th></tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:8px;"><span class="state-badge draft">draft</span></td><td style="padding:8px;">外部需求输入到达</td><td style="padding:8px;">阶段二开始</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge proposed">proposed</span></td><td style="padding:8px;">G2.5 通过</td><td style="padding:8px;">阶段二结束</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge designed">designed</span></td><td style="padding:8px;">G3.2 通过 + 人工确认</td><td style="padding:8px;">阶段三 Design</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge planned">planned</span></td><td style="padding:8px;">G3.3 通过 + 人工确认</td><td style="padding:8px;">阶段三 Plan</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge building">building</span></td><td style="padding:8px;">Build 模式启动</td><td style="padding:8px;">阶段三 Build</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge built">built</span></td><td style="padding:8px;">G3.4 通过</td><td style="padding:8px;">阶段三结束</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge verifying">verifying</span></td><td style="padding:8px;">阶段四开始</td><td style="padding:8px;">阶段四</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge completed">completed</span></td><td style="padding:8px;">G4.4 通过</td><td style="padding:8px;">阶段四结束</td><td style="padding:8px;"><code>completed/</code></td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge blocked">blocked</span></td><td style="padding:8px;">门禁持续失败 / 人工操作</td><td style="padding:8px;">任意阶段</td><td style="padding:8px;"><code>in-progress/</code></td></tr>
+          </tbody>
+        </table>
+
+        <div class="section-title">异常路径</div>
+        <ul style="font-size:0.85rem;color:var(--text-muted);padding-left:20px;">
+          <li><code>draft → rejected</code>: G2.1 失败（不可恢复的格式错误）</li>
+          <li><code>任何一个状态 → blocked</code>: 门禁持续失败 / 人工阻塞</li>
+          <li><code>verifying → fixing → verifying</code>: 验证失败修复循环 (最多3次)</li>
+          <li><code>blocked → proposed</code>: 人工解除阻塞后重新流入</li>
+          <li><code>blocked → [废弃]</code>: 需求取消</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Templates View -->
+    <div id="view-templates" style="display:none;">
+      <div class="section-title">模板系统预览</div>
+      <div class="template-tabs" id="templateTabs">
+        <button class="template-tab active" onclick="showTemplate('requirement-input')">需求输入模板</button>
+        <button class="template-tab" onclick="showTemplate('requirement-doc')">需求文档模板</button>
+        <button class="template-tab" onclick="showTemplate('kb-module')">KB 模块模板</button>
+        <button class="template-tab" onclick="showTemplate('impact-analysis')">影响分析模板</button>
+        <button class="template-tab" onclick="showTemplate('guard-config')">门禁配置模板</button>
+        <button class="template-tab" onclick="showTemplate('loop-state')">状态文件模板</button>
+      </div>
+      <div class="template-content" id="templateContent">
+        <em>选择模板查看内容</em>
+      </div>
+    </div>
+
+    <!-- Simulation View -->
+    <div id="view-simulation" style="display:none;">
+      <div class="section-title">流程模拟器</div>
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px;">模拟一个需求从输入到完成的完整 DevLoop 流转过程</p>
+
+      <div class="sim-controls">
+        <button class="sim-btn run" onclick="runSimulation()">▶ 自动运行</button>
+        <button class="sim-btn step" onclick="stepSimulation()">⏭ 单步执行</button>
+        <button class="sim-btn reset" onclick="resetSimulation()">↺ 重置</button>
+        <span style="font-size:0.8rem;color:var(--text-muted);margin-left:8px;" id="simSpeed">速度: 1.5s/步</span>
+      </div>
+
+      <div class="sim-progress" id="simProgress">
+        <div class="sim-dot" id="simDot1"></div><div class="sim-line"></div>
+        <div class="sim-dot" id="simDot2"></div><div class="sim-line"></div>
+        <div class="sim-dot" id="simDot3"></div><div class="sim-line"></div>
+        <div class="sim-dot" id="simDot4"></div><div class="sim-line"></div>
+        <div class="sim-dot" id="simDot5"></div>
+      </div>
+      <div style="text-align:center;font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;">
+        ① 逆向 → ② 摄入 → ③ 生成 → ④ 验证 → ⑤ 闭环
+      </div>
+
+      <div class="sim-log" id="simLog">
+        <div class="entry" style="color:var(--text-muted)">就绪，点击「自动运行」或「单步执行」开始模拟...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="section-title">系统快览</div>
+    <div style="font-size:0.8rem;">
+      <p style="margin:4px 0"><strong>阶段数:</strong> 5</p>
+      <p style="margin:4px 0"><strong>Skill 数:</strong> 15+ 可复用</p>
+      <p style="margin:4px 0"><strong>门禁数:</strong> 18</p>
+      <p style="margin:4px 0"><strong>模板数:</strong> 12</p>
+      <p style="margin:4px 0"><strong>人工确认点:</strong> 4</p>
+      <p style="margin:4px 0"><strong>Git 策略:</strong> 同仓库 / 目录隔离</p>
+    </div>
+
+    <div class="section-title">当前阶段详情</div>
+    <div id="sidebarDetail" style="font-size:0.8rem;color:var(--text-muted);">
+      <em>点击流程图中的阶段节点查看详情</em>
+    </div>
+
+    <div class="section-title">相关文档</div>
+    <div style="font-size:0.8rem;">
+      <p style="margin:4px 0">📄 <a href="./01-overview.md" style="color:var(--accent)">总体设计</a></p>
+      <p style="margin:4px 0">📄 <a href="./02-detailed-design.md" style="color:var(--accent)">详细设计</a></p>
+      <p style="margin:4px 0">📄 <a href="./03-flowcharts.md" style="color:var(--accent)">流程图集</a></p>
+    </div>
+
+    <div class="section-title">关键决策 (ADR)</div>
+    <div id="adrList" style="font-size:0.75rem;"></div>
+
+    <div class="section-title">未考虑问题速查</div>
+    <div id="issuesList" style="font-size:0.75rem;"></div>
+  </div>
+</div>
+
+<script>
+// ============ Data ============
+const stageData = {
+  1: {
+    name: '阶段一：逆向分析',
+    color: 'var(--stage1)',
+    skill: 'devloop-reverse',
+    description: '从现有代码逆向提取知识库和基线需求文档',
+    input: '现有代码仓库',
+    output: 'knowledge-base/ + requirements/baseline/',
+    skills: [
+      { name: 'codegraph_explore', type: 'primary', desc: '代码扫描与模块识别' },
+      { name: 'comet-knowledge', type: 'primary', desc: '逐模块深度知识提取 (并行)' },
+      { name: 'brainstorming', type: 'secondary', desc: '从KB反向推断需求' },
+      { name: 'devloop-guard', type: 'gate', desc: '门禁 G1.1-G1.5' },
+    ],
+    gates: [
+      { id: 'G1.1', name: '模块覆盖率', rule: 'modules_analyzed / total_modules >= 0.8', onFail: 'warn_and_continue' },
+      { id: 'G1.2', name: 'KB条目完整性', rule: 'all modules have overview + api', onFail: 'block_and_retry' },
+      { id: 'G1.3', name: 'KB内部一致性', rule: 'all cross-references valid', onFail: 'block_and_retry' },
+      { id: 'G1.4', name: '需求反向覆盖率', rule: 'modules_covered / total >= 0.9', onFail: 'warn_and_continue' },
+      { id: 'G1.5', name: '阶段一总门禁', rule: 'G1.1-G1.4 consolidated', onFail: 'block_and_retry' },
+    ],
+    artifacts: ['knowledge-base/.manifest.yaml', 'knowledge-base/modules/*/', 'knowledge-base/architecture/', 'requirements/baseline/REQ-*.md'],
+    humanGates: 0,
+    checkpoint: '每子步骤完成后自动保存',
+  },
+  2: {
+    name: '阶段二：需求摄入',
+    color: 'var(--stage2)',
+    skill: 'devloop-intake',
+    description: '接收外部需求输入，结合知识库生成结构化需求文档',
+    input: '外部需求 + 知识库',
+    output: 'requirements/in-progress/REQ-*.md + openspec/changes/',
+    skills: [
+      { name: 'devloop-intake', type: 'primary', desc: '输入解析 + 格式标准化' },
+      { name: 'codegraph_explore', type: 'secondary', desc: 'KB 上下文检索与加载' },
+      { name: 'brainstorming', type: 'primary', desc: '影响分析 + 需求完善' },
+      { name: 'comet-open', type: 'primary', desc: '创建 OpenSpec Change' },
+      { name: 'openspec-propose', type: 'secondary', desc: '生成正式 Proposal' },
+      { name: 'devloop-guard', type: 'gate', desc: '门禁 G2.1-G2.5' },
+    ],
+    gates: [
+      { id: 'G2.1', name: '输入有效性', rule: 'title + description 非空', onFail: 'reject' },
+      { id: 'G2.2', name: 'KB上下文相关性', rule: '至少匹配 1 个相关模块', onFail: 'warn_and_continue' },
+      { id: 'G2.3', name: '影响分析完整性', rule: '必须包含模块/数据/API变更', onFail: 'block_and_retry' },
+      { id: 'G2.4', name: '需求文档结构', rule: 'frontmatter 必填字段 + 引用有效', onFail: 'block_and_retry' },
+      { id: 'G2.5', name: '阶段二总门禁', rule: 'G2.1-G2.4 consolidated', onFail: 'block_and_retry' },
+    ],
+    artifacts: ['requirements/in-progress/REQ-*.md', 'openspec/changes/<name>/proposal.md', 'openspec/changes/<name>/.comet.yaml'],
+    humanGates: 1,
+    checkpoint: '影响分析完成后 + 需求文档生成后',
+  },
+  3: {
+    name: '阶段三：代码生成',
+    color: 'var(--stage3)',
+    skill: 'devloop-build',
+    description: '自动拉取未完成需求，通过Comet流程生成代码',
+    input: '需求文档 + 知识库 + 现有代码',
+    output: '代码变更 + openspec完整记录',
+    skills: [
+      { name: 'devloop-build', type: 'primary', desc: '需求拉取 + 优先级排序' },
+      { name: 'comet-design', type: 'primary', desc: 'Comet Design 阶段' },
+      { name: 'brainstorming', type: 'secondary', desc: '方案细化 (中/大需求)' },
+      { name: 'writing-plans', type: 'primary', desc: '生成实现计划 + 任务拆分' },
+      { name: 'executing-plans', type: 'secondary', desc: '主会话执行 (小需求)' },
+      { name: 'subagent-driven-development', type: 'primary', desc: '后台子代理 (中/大需求)' },
+      { name: 'test-driven-development', type: 'primary', desc: 'TDD 保障 (每个Task)' },
+      { name: 'devloop-guard', type: 'gate', desc: '门禁 G3.1-G3.4' },
+    ],
+    gates: [
+      { id: 'G3.1', name: '需求可构建性', rule: 'status允许 + KB引用有效', onFail: 'block (skip)' },
+      { id: 'G3.2', name: 'Design质量', rule: 'comet-guard design ALL CHECKS PASSED', onFail: 'block_and_retry' },
+      { id: 'G3.3', name: 'Plan质量', rule: '任务拆分无循环依赖', onFail: 'block_and_retry' },
+      { id: 'G3.4', name: 'Build质量', rule: '所有task勾选 + 测试覆盖不降', onFail: 'block_and_retry' },
+    ],
+    artifacts: ['openspec/changes/<name>/design.md', 'openspec/changes/<name>/plan.md', 'openspec/changes/<name>/tasks.md', 'src/** 变更'],
+    humanGates: 2,
+    checkpoint: 'Design后 + Plan后 + 每个Task commit后',
+  },
+  4: {
+    name: '阶段四：验证交付',
+    color: 'var(--stage4)',
+    skill: 'devloop-verify',
+    description: '自动化验证 + 代码审查 + Git提交 + 需求状态更新',
+    input: '代码变更',
+    output: '已验证提交 + 需求状态 updated',
+    skills: [
+      { name: 'comet-verify', type: 'primary', desc: 'Comet 验证流程' },
+      { name: 'verification-before-completion', type: 'primary', desc: '最终验证检查清单' },
+      { name: 'code-review', type: 'primary', desc: '代码质量审查' },
+      { name: 'systematic-debugging', type: 'secondary', desc: '失败修复 (如需要)' },
+      { name: 'devloop-guard', type: 'gate', desc: '门禁 G4.1-G4.4' },
+    ],
+    gates: [
+      { id: 'G4.1', name: '自动化验证', rule: '全部测试 + 构建 + Lint通过', onFail: 'block_and_retry (max 3)' },
+      { id: 'G4.2', name: '代码审查', rule: '无Critical + High <= 阈值', onFail: 'block_and_retry' },
+      { id: 'G4.3', name: '修复循环限制', rule: '修复次数 < 3', onFail: 'pause_for_human' },
+      { id: 'G4.4', name: '阶段四总门禁', rule: 'G4.1-G4.3 + 验收标准全部满足', onFail: 'block_and_retry' },
+    ],
+    artifacts: ['验证报告', '代码审查报告', 'Git commit (代码)', 'Git commit (需求状态)', 'requirements/completed/REQ-*.md'],
+    humanGates: 1,
+    checkpoint: '验证失败时 + 审查完成后 + commit前',
+  },
+  5: {
+    name: '阶段五：闭环回写',
+    color: 'var(--stage5)',
+    skill: 'devloop-loop',
+    description: '扫描待处理需求，自动触发下一轮，形成闭环',
+    input: '完成的需求记录',
+    output: '触发下一需求 (→ 阶段二或三)',
+    skills: [
+      { name: 'devloop-loop', type: 'primary', desc: '扫描 + 调度 + 监听' },
+      { name: 'devloop-guard', type: 'gate', desc: '门禁 G5.1' },
+      { name: 'Cron/Watch', type: 'secondary', desc: '定时扫描 + 事件监听' },
+    ],
+    gates: [
+      { id: 'G5.1', name: '状态一致性', rule: 'Git文件状态 = frontmatter状态', onFail: 'block_and_retry' },
+    ],
+    artifacts: ['下一需求自动开始', '通知输出'],
+    humanGates: 0,
+    checkpoint: '每轮扫描后',
+  },
+  kb: {
+    name: '知识库 (Knowledge Base)',
+    color: 'var(--accent)',
+    skill: 'N/A (静态产物)',
+    description: 'DevLoop 的核心 — AI 理解项目的长期记忆。连接逆向分析与正向生成。',
+    input: '阶段一的输出 + 阶段四的增量更新',
+    output: '为阶段二/三提供上下文',
+    skills: [],
+    gates: [],
+    artifacts: ['knowledge-base/architecture/', 'knowledge-base/modules/', 'knowledge-base/apis/', 'knowledge-base/data-models/'],
+    humanGates: 0,
+    checkpoint: 'N/A',
+  }
+};
+
+const adrData = [
+  { id: 'ADR-1', title: '需求与代码同仓库', decision: '同一Git仓库，目录隔离。原子commit，简化工具链。' },
+  { id: 'ADR-2', title: 'KB 采用 Markdown + Frontmatter', decision: '人机可读，Git diff 友好，结构化查询。' },
+  { id: 'ADR-3', title: '状态管理双保险', decision: 'loop-state.yaml + Git commits 交叉验证。' },
+  { id: 'ADR-4', title: '人工确认点最小化但关键', decision: '只在4个节点暂停，其余全自动。' },
+];
+
+const issuesData = [
+  { cat: '技术', items: ['跨仓库需求协调', 'KB规模膨胀/上下文窗口', '并发需求Git冲突', '非功能需求逆向缺失', '测试代码作为知识来源', '外部依赖变化感知'] },
+  { cat: '流程', items: ['长流程会话超时', '人工确认点积压', '需求变更时回滚成本', '环境一致性问题'] },
+  { cat: '组织', items: ['角色与权限模型', '需求溯源链完整性', 'KB AI自动更新可信度', '多人协作冲突'] },
+  { cat: '质量', items: ['需求推断偏差', '门禁疲劳/绕过', 'AI生成测试脆弱性', '知识漂移累积'] },
+];
+
+const templateData = {
+  'requirement-input': `---
+type: feature | bugfix | enhancement | refactor
+priority: high | medium | low
+source: cli | api | ide | webhook
+related_modules: []
+---
+# [标题]
+
+## 背景
+[为什么需要这个需求]
+
+## 描述
+[需求的详细描述]
+
+## 验收标准
+- [ ] 标准 1
+- [ ] 标准 2
+
+## 附加信息
+[截图、链接、参考等]`,
+  'requirement-doc': `---
+id: {{ req_id }}
+title: {{ title }}
+type: {{ type }}
+priority: {{ priority }}
+status: {{ status }}
+module: {{ primary_module }}
+kb_context:
+{{#each kb_contexts}}
+  - {{ this }}
+{{/each}}
+created: {{ created_date }}
+updated: {{ updated_date }}
+---
+# {{ req_id }}: {{ title }}
+
+## 背景
+{{ background }}
+
+## 功能描述
+{{ description }}
+
+## 涉及模块
+{{#each affected_modules}}
+- **{{ this.name }}**: {{ this.change_description }}
+{{/each}}
+
+## API 变更
+{{#each api_changes}}
+### {{ this.method }} {{ this.path }}
+- 变更类型: {{ this.change_type }}
+- 描述: {{ this.description }}
+{{/each}}
+
+## 数据模型变更
+{{#each data_model_changes}}
+### {{ this.entity }}
+- 变更类型: {{ this.change_type }}
+- 字段: {{ this.fields }}
+{{/each}}
+
+## 验收标准
+{{#each acceptance_criteria}}
+- [ ] {{ this }}
+{{/each}}
+
+## 实现跟踪
+| 阶段 | 状态 | 完成时间 |
+|------|------|---------|
+| Design | {{ design_status }} | {{ design_date }} |
+| Plan | {{ plan_status }} | {{ plan_date }} |
+| Build | {{ build_status }} | {{ build_date }} |
+| Verify | {{ verify_status }} | {{ verify_date }} |`,
+  'kb-module': `---
+module: {{ module_name }}
+path: {{ module_path }}
+type: {{ module_type }}
+analyzed_at: {{ analyzed_date }}
+confidence: high | medium | low
+dependencies:
+{{#each dependencies}}
+  - {{ this }}
+{{/each}}
+---
+# {{ module_name }}
+
+## 职责
+{{ responsibility }}
+
+## 对外接口
+{{#each apis}}
+### {{ this.name }}
+- 签名: \`{{ this.signature }}\`
+- 参数: {{ this.params }}
+- 返回: {{ this.returns }}
+- 行为: {{ this.behavior }}
+{{/each}}
+
+## 数据模型
+{{#each data_models}}
+### {{ this.name }}
+\`\`\`
+{{ this.definition }}
+\`\`\`
+{{/each}}
+
+## 核心逻辑
+{{ core_logic }}
+
+## 依赖
+{{ dependency_details }}`,
+  'impact-analysis': `# 影响分析: {{ title }}
+
+## 涉及模块
+{{#each affected_modules}}
+- **{{ this.name }}**: {{ this.change_description }}
+{{/each}}
+
+## 数据模型变更
+{{#each data_model_changes}}
+### {{ this.entity }}
+- 变更类型: {{ this.change_type }} (add | modify | remove)
+- 字段: {{ this.fields }}
+- 迁移需求: {{ this.migration }}
+{{/each}}
+
+## API 变更
+{{#each api_changes}}
+### {{ this.method }} {{ this.path }}
+- 变更类型: {{ this.change_type }}
+- 请求变更: {{ this.request_changes }}
+- 响应变更: {{ this.response_changes }}
+- 向后兼容: {{ this.backward_compatible }}
+{{/each}}
+
+## 风险
+{{#each risks}}
+- **{{ this.level }}**: {{ this.description }}
+  - 缓解: {{ this.mitigation }}
+{{/each}}
+
+## KB 参考
+{{#each kb_refs}}
+- [[{{ this }}]]
+{{/each}}`,
+  'guard-config': `# 门禁配置
+gates:
+  stage-1-reverse:
+    - id: G1.1
+      name: 模块覆盖率
+      rule: "modules_analyzed / total_modules >= 0.8"
+      on_fail: warn_and_continue
+    - id: G1.2
+      name: KB 条目完整性
+      rule: "all(module.has('overview.md') and module.has('api.md'))"
+      on_fail: block_and_retry
+    - id: G1.5
+      name: 阶段一总门禁
+      rule: "all(G1.1.soft_pass, G1.2, G1.3, G1.4.soft_pass)"
+      on_fail: block_and_retry
+
+# on_fail 动作:
+#   block_and_retry: 阻断 + 自动重试 (最多3次)
+#   warn_and_continue: 记录警告, 继续
+#   reject: 直接拒绝, 返回给调用方
+#   pause_for_human: 暂停等待人工决策`,
+  'loop-state': `# .comet/loop-state.yaml
+devloop:
+  version: "1.0"
+  updated: "2026-06-27T10:30:00Z"
+
+  current_stage: 3
+  current_step: 3.4
+
+  active_requirement:
+    id: REQ-010
+    title: 添加 OAuth2 第三方登录
+    change_name: add-oauth2-support
+
+  checkpoint:
+    stage: 3
+    step: 3.4
+    last_action: "plan.md created, waiting for user confirmation"
+    timestamp: "2026-06-27T10:30:00Z"
+    git_commit: "abc1234"
+
+  completed_steps:
+    stage-1:
+      - step: 1.1
+        status: completed
+        timestamp: "2026-06-27T09:00:00Z"
+    # ...
+
+  gate_results:
+    G1.1: { passed: true, warnings: ["module coverage: 85%"] }
+    # ...
+
+  pending_confirmations:
+    - type: plan_ready
+      req: REQ-010
+      message: "Implementation plan is ready for review"
+
+  errors: []`
+};
+
+// ============ View switching ============
+let currentView = 'loop';
+
+function switchView(view) {
+  currentView = view;
+  document.querySelectorAll('[id^="view-"]').forEach(el => el.style.display = 'none');
+  document.getElementById('view-' + view).style.display = 'block';
+
+  // Update toggle buttons
+  document.querySelectorAll('.header .toggle-btn').forEach(btn => {
+    btn.classList.remove('active');
+    if (btn.textContent.includes(getViewLabel(view))) btn.classList.add('active');
+  });
+
+  if (view === 'templates') {
+    showTemplate('requirement-input');
+  }
+}
+
+function getViewLabel(view) {
+  const labels = { loop: '闭环全景', flowchart: '详细流程', statemachine: '需求状态机', templates: '模板预览', simulation: '流程模拟' };
+  return labels[view] || '';
+}
+
+// ============ Stage selection ============
+let selectedStage = null;
+
+function selectStage(stageId) {
+  selectedStage = stageId;
+  const data = stageData[stageId];
+  if (!data) return;
+
+  // Update nodes
+  document.querySelectorAll('.stage-node').forEach(n => n.classList.remove('active'));
+  const nodeId = 'node-s' + stageId;
+  const node = document.getElementById(nodeId);
+  if (node) node.classList.add('active');
+
+  // Update detail panel
+  const panel = document.getElementById('detailPanel');
+  const content = document.getElementById('detailContent');
+  panel.classList.add('visible');
+
+  let html = `<h3><span class="dot" style="background:${data.color}"></span>${data.name}</h3>`;
+  html += `<p style="color:var(--text-muted);margin-bottom:12px;">${data.description}</p>`;
+
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:0.85rem;margin-bottom:12px;">`;
+  html += `<div><strong>编排Skill:</strong> <code>${data.skill}</code></div>`;
+  html += `<div><strong>人工确认点:</strong> ${data.humanGates} 个</div>`;
+  html += `<div><strong>输入:</strong> ${data.input}</div>`;
+  html += `<div><strong>输出:</strong> ${data.output}</div>`;
+  html += `</div>`;
+
+  // Skill chain
+  if (data.skills.length > 0) {
+    html += `<div class="section-title">Skill 链</div>`;
+    html += `<div class="skill-chain">`;
+    data.skills.forEach((s, i) => {
+      if (i > 0) html += `<span class="skill-arrow">→</span>`;
+      html += `<span class="skill-chip ${s.type}">${s.name}</span>`;
+    });
+    html += `</div>`;
+  }
+
+  // Gates
+  if (data.gates.length > 0) {
+    html += `<div class="section-title">质量门禁</div>`;
+    html += `<table class="gate-table"><tr><th>ID</th><th>名称</th><th>规则</th><th>失败动作</th></tr>`;
+    data.gates.forEach(g => {
+      const actionClass = g.onFail.includes('block') ? 'gate-fail' : g.onFail.includes('warn') ? 'gate-warn' : 'gate-pass';
+      html += `<tr>`;
+      html += `<td><strong>${g.id}</strong></td>`;
+      html += `<td>${g.name}</td>`;
+      html += `<td style="font-size:0.8rem"><code>${g.rule}</code></td>`;
+      html += `<td class="${actionClass}">${g.onFail}</td>`;
+      html += `</tr>`;
+    });
+    html += `</table>`;
+  }
+
+  // Artifacts
+  if (data.artifacts.length > 0) {
+    html += `<div class="section-title">产物清单</div>`;
+    html += `<ul style="font-size:0.85rem;padding-left:20px;">`;
+    data.artifacts.forEach(a => {
+      html += `<li><code>${a}</code></li>`;
+    });
+    html += `</ul>`;
+  }
+
+  content.innerHTML = html;
+
+  // Update sidebar detail
+  updateSidebarDetail(data);
+
+  // Scroll to panel
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function updateSidebarDetail(data) {
+  const el = document.getElementById('sidebarDetail');
+  el.innerHTML = `
+    <p style="margin:4px 0"><strong>编排 Skill:</strong> <code style="color:${data.color}">${data.skill}</code></p>
+    <p style="margin:4px 0"><strong>描述:</strong> ${data.description}</p>
+    <p style="margin:4px 0"><strong>人工确认点:</strong> ${data.humanGates} 个</p>
+    <p style="margin:4px 0"><strong>Checkpoint:</strong> ${data.checkpoint}</p>
+    <p style="margin:4px 0"><strong>门禁数:</strong> ${data.gates.length}</p>
+    <p style="margin:4px 0"><strong>Skill 数:</strong> ${data.skills.length}</p>
+  `;
+}
+
+// ============ Flowchart view ============
+function showFlowchart(name) {
+  document.querySelectorAll('#flowchartTabs .toggle-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const content = document.getElementById('flowchartContent');
+  content.innerHTML = `<p style="color:var(--text-muted);text-align:center;padding:40px;">
+    Mermaid 流程图请参考 <a href="./03-flowcharts.md" style="color:var(--accent)">03-flowcharts.md</a><br/><br/>
+    <small>章节: ${name === 'overall' ? '1. 系统全景图' :
+      name === 'stage1' ? '2. 阶段一详细流程' :
+      name === 'stage2' ? '3. 阶段二详细流程' :
+      name === 'stage3' ? '4. 阶段三详细流程' :
+      name === 'stage4' ? '5. 阶段四详细流程' :
+      name === 'stage5' ? '6. 阶段五闭环流程' :
+      name === 'gates' ? '10. 门禁决策树' :
+      name === 'recovery' ? '8. 中断恢复流程' : ''}</small>
+  </p>`;
+}
+
+// ============ Template view ============
+function showTemplate(name) {
+  document.querySelectorAll('#templateTabs .template-tab').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const content = document.getElementById('templateContent');
+  if (templateData[name]) {
+    content.innerHTML = templateData[name];
+    content.style.color = 'var(--text)';
+  } else {
+    content.innerHTML = '<em>模板内容加载中...</em>';
+  }
+}
+
+// ============ Simulation ============
+const simSteps = [
+  { stage: 1, desc: '阶段一：代码扫描 → 模块识别 (codegraph_explore)', dot: 1 },
+  { stage: 1, desc: '阶段一：并行模块深度分析 (comet-knowledge × N)', dot: 1 },
+  { stage: 1, desc: '阶段一：KB汇总 + 需求反向推断', dot: 1 },
+  { stage: 'gate', desc: '门禁 G1.1-G1.5: 模块覆盖率 85%, KB条目完整 ✓, 一致性 ✓, 需求覆盖率 92%', dot: 1 },
+  { stage: 1, desc: '阶段一完成 ✓ Git Commit: [devloop] stage:1', dot: 1 },
+  { stage: 2, desc: '阶段二：收到外部需求 "添加OAuth2登录"', dot: 2 },
+  { stage: 2, desc: '阶段二：KB上下文加载 → 匹配 auth-service, api-gateway', dot: 2 },
+  { stage: 2, desc: '阶段二：影响分析 (brainstorming) — 涉及2个模块，新增1个API，修改User模型', dot: 2 },
+  { stage: 'human', desc: '🔴 人工确认点: 需求文档待确认...', dot: 2 },
+  { stage: 2, desc: '阶段二完成 ✓ Git Commit: status=proposed', dot: 2 },
+  { stage: 3, desc: '阶段三：自动拉取 REQ-010，优先级: high (score=100)', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Design → design.md + delta-spec', dot: 3 },
+  { stage: 'human', desc: '🔴 人工确认点: 设计方案待确认...', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Plan → plan.md (拆分为4个task)', dot: 3 },
+  { stage: 'human', desc: '🔴 人工确认点: 实现计划待确认...', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Build — Task 1/4: 扩展User数据模型 (TDD + 双审查 ✓)', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Build — Task 2/4: 实现OAuth2回调 (TDD + 双审查 ✓)', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Build — Task 3/4: 更新API Gateway路由 (TDD + 双审查 ✓)', dot: 3 },
+  { stage: 3, desc: '阶段三：Comet Build — Task 4/4: 添加前端登录入口 (TDD + 双审查 ✓)', dot: 3 },
+  { stage: 'gate', desc: '门禁 G3.4: 所有task ✓ 测试覆盖率 92% ✓ comet-guard PASSED', dot: 3 },
+  { stage: 3, desc: '阶段三完成 ✓', dot: 3 },
+  { stage: 4, desc: '阶段四：自动化验证 — 单元测试 47/47 ✓ 集成测试 12/12 ✓ 构建 ✓ Lint ✓', dot: 4 },
+  { stage: 4, desc: '阶段四：代码审查 (code-review high) — 0 Critical, 2 High, 5 Medium', dot: 4 },
+  { stage: 4, desc: '阶段四：修复 High 问题 → 重新验证 → 全部通过', dot: 4 },
+  { stage: 'gate', desc: '门禁 G4.4: 全部通过 ✓ 验收标准6/6满足 ✓ KB一致性 ✓', dot: 4 },
+  { stage: 4, desc: '阶段四完成 ✓ Git Commit 代码 + 需求状态更新 → completed', dot: 4 },
+  { stage: 5, desc: '阶段五：扫描待处理需求 — 发现 REQ-011, REQ-012 在队列中', dot: 5 },
+  { stage: 5, desc: '阶段五：选取 REQ-011 (priority=high) → 触发阶段三', dot: 5 },
+  { stage: 5, desc: '闭环完成 🔄 下一轮开始...', dot: 5 },
+];
+
+let simIndex = -1;
+let simTimer = null;
+
+function resetSimulation() {
+  if (simTimer) { clearInterval(simTimer); simTimer = null; }
+  simIndex = -1;
+  document.getElementById('simLog').innerHTML = '<div class="entry" style="color:var(--text-muted)">已重置，点击「自动运行」或「单步执行」开始...</div>';
+  [1,2,3,4,5].forEach(i => {
+    const dot = document.getElementById('simDot'+i);
+    dot.classList.remove('done','active','fail');
+  });
+  document.querySelectorAll('.sim-line').forEach(l => l.classList.remove('done'));
+}
+
+function stepSimulation() {
+  simIndex++;
+  if (simIndex >= simSteps.length) {
+    simIndex = simSteps.length - 1;
+    addLogEntry('🏁 模拟完成！REQ-010 已交付，REQ-011 自动开始。闭环持续运转中...', 'stage5');
+    updateSimDots(simSteps[simIndex].dot);
+    return;
+  }
+
+  const step = simSteps[simIndex];
+  const stageClass = typeof step.stage === 'number' ? ('stage' + step.stage) : step.stage;
+  addLogEntry(`[Step ${simIndex+1}/${simSteps.length}] ${step.desc}`, stageClass);
+  updateSimDots(step.dot);
+}
+
+function runSimulation() {
+  if (simTimer) { clearInterval(simTimer); simTimer = null; return; }
+  resetSimulation();
+
+  simIndex = -1;
+  simTimer = setInterval(() => {
+    simIndex++;
+    if (simIndex >= simSteps.length) {
+      clearInterval(simTimer);
+      simTimer = null;
+      addLogEntry('🏁 模拟完成！REQ-010 已交付，REQ-011 自动开始。闭环持续运转中...', 'stage5');
+      updateSimDots(5);
+      return;
+    }
+    const step = simSteps[simIndex];
+    const stageClass = typeof step.stage === 'number' ? ('stage' + step.stage) : step.stage;
+    addLogEntry(`[Step ${simIndex+1}/${simSteps.length}] ${step.desc}`, stageClass);
+    updateSimDots(step.dot);
+  }, 1500);
+}
+
+function addLogEntry(msg, cls) {
+  const log = document.getElementById('simLog');
+  log.innerHTML += `<div class="entry ${cls}">${msg}</div>`;
+  log.scrollTop = log.scrollHeight;
+}
+
+function updateSimDots(activeDot) {
+  [1,2,3,4,5].forEach(i => {
+    const dot = document.getElementById('simDot'+i);
+    dot.classList.remove('active','fail');
+    if (i < activeDot) dot.classList.add('done');
+    else if (i === activeDot) dot.classList.add('active');
+  });
+  // Update connecting lines
+  document.querySelectorAll('.sim-line').forEach((line, idx) => {
+    line.classList.remove('done');
+    if (idx + 1 < activeDot) line.classList.add('done');
+  });
+}
+
+// ============ Initialize ============
+function init() {
+  // Load ADR list
+  const adrEl = document.getElementById('adrList');
+  adrEl.innerHTML = adrData.map(a =>
+    `<p style="margin:6px 0"><strong style="color:var(--accent)">${a.id}:</strong> ${a.title}<br/><span style="color:var(--text-muted)">${a.decision}</span></p>`
+  ).join('');
+
+  // Load issues list
+  const issuesEl = document.getElementById('issuesList');
+  issuesEl.innerHTML = issuesData.map(cat =>
+    `<p style="margin:6px 0"><strong>${cat.cat}:</strong></p>` +
+    '<ul style="padding-left:16px;margin:2px 0 6px;">' +
+    cat.items.map(i => `<li>${i}</li>`).join('') +
+    '</ul>'
+  ).join('');
+
+  // Select Stage 1 by default
+  selectStage(1);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
