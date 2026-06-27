@@ -1,7 +1,7 @@
 ---
 module: design-docs
 source: auto-generated
-confidence: 0.95
+confidence: 0.80
 drift_score: 0.0
 last_updated: "2026-06-27T14:00:00Z"
 generated_from:
