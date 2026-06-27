@@ -46,6 +46,11 @@ package.json
 skills-lock.json
 # Explorer outputs
 explorer/outputs/
+
+# DevLoop 测试数据（本地保留，不提交）
+knowledge-base/
+requirements/
+openspec/
 !.comet/scripts/
 !.comet/guard-config.yaml
 !.claude/skills/devloop-resume/
