@@ -1,0 +1,10 @@
+# Comet 提案元数据 — 由 devloop-intake 自动创建
+change_name: add-login-logging
+req_id: REQ-006
+phase: open
+created_at: "2026-06-27T07:14:00Z"
+created_by: devloop-intake
+confirmation_level: 3
+nfr_dimensions_triggered: 6
+kb_match_score: 0.0
+confidence: low
