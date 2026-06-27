@@ -3,7 +3,7 @@ module: design-docs
 path: design/
 type: config
 source: auto-generated
-confidence: 0.95
+confidence: 0.80
 drift_score: 0.0
 last_updated: "2026-06-27T14:00:00Z"
 generated_from:
@@ -40,20 +40,20 @@ config
 - **中断恢复**: 设计会话中断/上下文压缩恢复的完整流程
 - **确认策略**: 设计三级确认体系（Level 1-3），默认高保障
 
-## 对外接口
+## 对外接口（实现状态标注: ✅=已实现, 📋=设计中, ⏳=待实现）
 
-- `devloop-reverse` — 阶段一总编排 Skill（新建，~150 行），委托 codegraph_explore/dispatching-parallel-agents/brainstorming 等
-- `devloop-intake` — 阶段二总编排 Skill（新建，~180 行），委托 brainstorming/openspec-propose 等
-- `devloop-build` — 阶段三总编排 Skill（新建，~150 行），委托 brainstorming/writing-plans/subagent-driven-development 等
-- `devloop-verify` — 阶段四总编排 Skill（新建，~120 行），委托 verification-before-completion/code-review/systematic-debugging 等
-- `devloop-loop` — 阶段五总编排 Skill（新建，~80 行），负责扫描队列和路由
-- `devloop-resume` — 中断恢复 Skill（新建，~80 行），负责状态读取和流程恢复
-- `comet-state` — 状态管理脚本（新建，~200 行），YAML 读写
-- `devloop-guard` — 门禁执行引擎脚本（新建，~200 行），硬/软分离
-- `kb-drift-check` — KB 漂移检测脚本（新建，~100 行）
-- `kb-freshness-trigger` — KB 保鲜触发脚本（新建，~120 行）
-- `kb-trust-update` — KB 信任级别评估脚本（新建，~80 行）
-- `confirmation-queue` — 确认队列管理脚本（新建，~100 行）
+- ✅ `devloop-reverse` — 阶段一总编排 Skill（Phase 1 已交付）
+- ✅ `devloop-resume` — 中断恢复 Skill（Phase 0 已交付）
+- 📋 `devloop-intake` — 阶段二总编排 Skill（设计完成，待 Phase 2 实现）
+- 📋 `devloop-build` — 阶段三总编排 Skill（设计完成，待 Phase 3 实现）
+- 📋 `devloop-verify` — 阶段四总编排 Skill（设计完成，待 Phase 4 实现）
+- 📋 `devloop-loop` — 阶段五总编排 Skill（设计完成，待 Phase 4 实现）
+- ✅ `comet-state` — 状态管理脚本（Phase 0 已交付）
+- ✅ `devloop-guard` — 门禁执行引擎脚本（Phase 0 已交付）
+- ⏳ `kb-drift-check` — KB 漂移检测脚本（待 Phase 5 实现）
+- ⏳ `kb-freshness-trigger` — KB 保鲜触发脚本（待 Phase 5 实现）
+- ⏳ `kb-trust-update` — KB 信任级别评估脚本（待 Phase 5 实现）
+- ⏳ `confirmation-queue` — 确认队列管理脚本（待 Phase 5 实现）
 
 ## 依赖关系
 
