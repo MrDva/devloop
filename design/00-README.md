@@ -14,6 +14,7 @@
 | [02-detailed-design.md](./02-detailed-design.md) | 详细设计：每阶段 Skill 链、产物定义、门禁规则、模板、中断恢复、未考虑问题、确认策略、KB防御、KB上下文管理、验证策略、保鲜触发、并发预留、需求变更 | 实现者 |
 | [03-flowcharts.md](./03-flowcharts.md) | 流程图：Mermaid 格式的阶段流程图、状态机图、序列图 | 所有人 |
 | [04-interactive-ui.html](./04-interactive-ui.html) | 交互式可视化：可在浏览器中打开的完整流程演示 | 演示/评审 |
+| [05-implementation-tasks.md](./05-implementation-tasks.md) | 实现任务清单：36 个可独立验证的任务，6 个 Phase | 实现者 |
 
 ---
 
