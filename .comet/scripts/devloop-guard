@@ -464,7 +464,7 @@ run_hard_check() {
     G2.1)
       # 输入有效性: 检查是否有需求文档
       local req_docs
-      req_docs=$(find "$PROJECT_ROOT/requirements/in-progress/" -name "REQ-*.md" 2>/dev/null | head -1)
+      req_docs=$(find "$PROJECT_ROOT/requirements/in-progress/" -maxdepth 1 -name "REQ-*.md" 2>/dev/null | head -1)
       if [[ -n "$req_docs" ]]; then
         # 检查 frontmatter
         if grep -q 'title:' "$req_docs" && grep -q 'description\|功能描述' "$req_docs"; then
@@ -486,7 +486,7 @@ run_hard_check() {
     G2.4)
       # 需求文档结构
       local req_docs
-      req_docs=$(find "$PROJECT_ROOT/requirements/in-progress/" -name "REQ-*.md" 2>/dev/null | head -1)
+      req_docs=$(find "$PROJECT_ROOT/requirements/in-progress/" -maxdepth 1 -name "REQ-*.md" 2>/dev/null | head -1)
       if [[ -z "$req_docs" ]]; then
         echo "等待需求文档"
         return 0
