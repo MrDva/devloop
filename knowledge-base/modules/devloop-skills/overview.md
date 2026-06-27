@@ -26,9 +26,9 @@ service
 
 ## 核心功能
 
-- **DevLoop 编排层（6 个）**: devloop-reverse, devloop-intake, devloop-build, devloop-verify, devloop-loop, devloop-resume -- 五阶段闭环编排与中断恢复
+- **DevLoop 编排层（6 个，2 已实现）**: devloop-reverse（✅）, devloop-resume（✅）, devloop-intake（待实现）, devloop-build（待实现）, devloop-verify（待实现）, devloop-loop（待实现） -- 五阶段闭环编排与中断恢复
 - **Comet/OpenSpec 流程层（11 个）**: openspec-new-change, openspec-propose, openspec-explore, openspec-ff-change, openspec-continue-change, openspec-apply-change, openspec-verify-change, openspec-sync-specs, openspec-archive-change, openspec-bulk-archive-change, openspec-onboard -- 基于 OpenSpec CLI 的结构化变更管理（从创建到归档）
-- **通用工程层（10 个）**: brainstorming, writing-plans, subagent-driven-development, executing-plans, test-driven-development, requesting-code-review, receiving-code-review, systematic-debugging, verification-before-completion, finishing-a-development-branch -- 需求澄清、计划制定、实现执行、代码审查、调试验证、分支收尾
+- **通用工程层（14 个）**: brainstorming, writing-plans, subagent-driven-development, executing-plans, test-driven-development, requesting-code-review, receiving-code-review, systematic-debugging, verification-before-completion, finishing-a-development-branch, dispatching-parallel-agents, using-git-worktrees, using-superpowers, writing-skills -- 需求澄清、计划制定、实现执行、并行分派、代码审查、调试验证、分支收尾
 
 ## 对外接口
 

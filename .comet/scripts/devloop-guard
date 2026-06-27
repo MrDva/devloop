@@ -368,8 +368,13 @@ run_hard_check() {
       module_count=$(find "$PROJECT_ROOT/knowledge-base/modules/" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
       src_dir_count=$(find "$PROJECT_ROOT/src/" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
       if [[ "$src_dir_count" -eq 0 ]]; then
-        echo "无可分析的源码目录"
-        return 0  # 空项目不阻塞
+        if [[ "$module_count" -gt 0 ]]; then
+          echo "非标准源码布局 (${module_count} 模块已分析，覆盖率检查跳过)"
+          return 0
+        else
+          echo "无可分析的源码目录且无 KB 模块 — 可能是空项目或 codegraph 扫描未匹配到源码"
+          return 0  # 不阻塞新项目，但提示注意
+        fi
       fi
       local pct=$(( module_count * 100 / src_dir_count ))
       if [[ $pct -ge 80 ]]; then

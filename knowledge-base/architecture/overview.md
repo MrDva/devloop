@@ -24,9 +24,11 @@ generated_from:
 │  reverse / intake / build / verify /     │
 │  loop / resume                           │
 ├──────────────────────────────────────────┤
-│         通用工程 Skill 层 (11 Skills)      │  ← 委托执行
+│         通用工程 Skill 层 (14 Skills)      │  ← 委托执行
 │  brainstorming / writing-plans /         │
 │  sdd / tdd / code-review / debugging ... │
+│  dispatching-parallel-agents /           │
+│  using-git-worktrees / writing-skills ...│
 ├──────────────────────────────────────────┤
 │         基础设施层 (2 Scripts)             │  ← 状态/门禁
 │  comet-state / devloop-guard             │
@@ -56,7 +58,7 @@ generated_from:
 
 ## 关键设计决策
 
-- **薄编排层**: 6 个 DevLoop Skill 只做编排，不重复实现已有 Skill 的功能
+- **薄编排层**: 6 个 DevLoop Skill 只做编排，不重复实现已有 Skill 的功能（当前已实现 reverse + resume，intake/build/verify/loop 待后续 Phase 交付）
 - **硬/软门禁分离**: 硬门禁脚本自动判定可 BLOCK，软门禁 LLM 评估仅 WARN
 - **基线需求 reference_only**: 从代码反推的需求仅供背景参考，不约束新设计
 - **单模块 < 50K tokens**: KB 条目按模块拆分，确保上下文窗口够用
