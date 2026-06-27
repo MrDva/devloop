@@ -1,0 +1,360 @@
+# DevLoop 门禁配置 (Guard Configuration)
+# 18 个门禁，硬/软分离
+# 硬门禁: 脚本自动判定（test -f, grep -c, 退出码等），可 BLOCK
+# 软门禁: LLM 语义评估，仅 WARN 不阻断
+# mixed: 硬门禁 + 软门禁两层，分别判定
+
+gates:
+  # ═══════════════════ Phase 1: 逆向分析 ═══════════════════
+  stage-1:
+    - id: G1.1
+      name: 模块覆盖率
+      type: hard
+      stage: 1
+      description: "确保逆向分析覆盖了足够多的模块"
+      checks:
+        - type: file_count
+          rule: "modules_analyzed / total_modules >= 0.8"
+          detail: "knowledge-base/modules/ 下目录数 >= 源码目录数 * 0.8"
+      on_fail: warn_and_continue
+
+    - id: G1.2
+      name: KB条目完整性
+      type: hard
+      stage: 1
+      description: "每个已分析模块至少有 overview.md 和 api.md"
+      checks:
+        - type: file_exists_per_module
+          rule: "all(module.has('overview.md') AND module.has('api.md') for module in modules)"
+          detail: "每个 knowledge-base/modules/<name>/ 下必须存在 overview.md 和 api.md"
+      on_fail: block_and_retry
+
+    - id: G1.3
+      name: KB内部一致性
+      type: mixed
+      stage: 1
+      description: "KB 条目间的交叉引用一致且语义匹配"
+      hard:
+        - type: wiki_links_valid
+          rule: "all_wiki_link_targets_exist(knowledge-base/)"
+          detail: "所有 [[module-name]] 引用指向的目标文件必须存在"
+      soft:
+        - rule: "交叉引用指向的模块描述与引用上下文一致"
+          detail: "引用内容语义匹配（LLM 评估）"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G1.4
+      name: 需求反向覆盖率
+      type: hard
+      stage: 1
+      description: "每个模块至少被 1 个基线需求覆盖，低置信度需求 <= 20%"
+      checks:
+        - type: count
+          rule: "modules_covered_by_req / total_modules >= 0.9"
+          detail: "requirements/baseline/ 中覆盖的模块数占比"
+        - type: count
+          rule: "count(confidence == low) / count(all_req) <= 0.2"
+          detail: "低置信度基线需求比例不超过 20%"
+      on_fail: warn_and_continue
+
+    - id: G1.5
+      name: 阶段一总门禁
+      type: hard
+      stage: 1
+      description: "阶段一所有硬门禁的汇总判定"
+      checks:
+        - type: gate_aggregate
+          rule: "G1.2 = pass AND (G1.3.hard = pass OR G1.1 = pass)"
+          detail: "G1.2 必须通过，G1.1/G1.3.hard 至少有一个通过"
+      on_fail: block_and_retry
+
+  # ═══════════════════ Phase 2: 需求摄入 ═══════════════════
+  stage-2:
+    - id: G2.1
+      name: 输入有效性
+      type: hard
+      stage: 2
+      description: "需求输入包含必需字段且类型有效"
+      checks:
+        - type: field_nonempty
+          rule: "input.title 非空 AND input.description 非空"
+          detail: "需求输入需要标题和描述"
+        - type: enum_valid
+          rule: "input.type ∈ [feature, bugfix, enhancement, refactor, chore]"
+          detail: "需求类型必须是有效枚举值"
+      on_fail: reject
+
+    - id: G2.2
+      name: KB上下文相关性
+      type: soft
+      stage: 2
+      description: "匹配到的 KB 模块与需求描述语义相关（LLM 评估）"
+      checks:
+        - rule: "匹配到的 KB 模块至少 1 个"
+          detail: "至少匹配到一个相关模块（新模块可能无法匹配）"
+        - rule: "匹配模块的关键词与需求描述语义相关"
+          detail: "LLM 评估语义匹配质量"
+      on_fail: warn_and_continue
+
+    - id: G2.3
+      name: 影响分析完整性
+      type: mixed
+      stage: 2
+      description: "影响分析报告包含所有必需章节和质量内容"
+      hard:
+        - type: file_exists
+          rule: "影响分析文档存在且非空"
+          detail: "impact-analysis.md 文件存在"
+        - type: section_exists
+          rule: "包含 '涉及模块' 章节"
+          detail: "必须有涉及模块章节"
+        - type: section_exists
+          rule: "包含 'API变更' 或明确声明无变更"
+          detail: "API 变更分析或明确的无变更声明"
+        - type: section_exists
+          rule: "包含 '数据模型变更' 或明确声明无变更"
+          detail: "数据模型变更分析或明确的无变更声明"
+        - type: section_exists
+          rule: "包含 '非功能需求评估' 章节"
+          detail: "NFR 强制评估产出的章节"
+        - type: nfr_coverage
+          rule: "所有 NFR 触发维度在需求文档验收标准中有对应 checklist 项"
+          detail: "NFR 覆盖度检查"
+      soft:
+        - rule: "涉及模块的分析深度足够（非一句话敷衍）"
+          detail: "LLM 评估影响分析深度"
+        - rule: "API/数据模型变更描述具体到函数/字段级别"
+          detail: "LLM 评估变更描述粒度"
+        - rule: "NFR 评估各维度的补充验收标准具体可测"
+          detail: "LLM 评估 NFR 验收标准质量"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G2.4
+      name: 需求文档结构
+      type: hard
+      stage: 2
+      description: "需求文档 frontmatter 包含所有必填字段"
+      checks:
+        - type: frontmatter_fields
+          rule: "frontmatter 包含 id, title, type, priority, status, module"
+          detail: "必须包含的 frontmatter 字段"
+        - type: frontmatter_fields
+          rule: "kb_context 引用至少 2 个"
+          detail: "KB 上下文引用数量"
+        - type: content_match
+          rule: "需求文档内容与 openspec proposal.md 一致"
+          detail: "需求文档与 OpenSpec 提案一致"
+        - type: baseline_restriction
+          rule: "baseline 需求必须包含 source: auto-inferred 和 usage_restriction: reference_only"
+          detail: "基线需求用途限制声明"
+      on_fail: block_and_retry
+
+    - id: G2.5
+      name: 阶段二总门禁
+      type: hard
+      stage: 2
+      description: "阶段二所有硬门禁的汇总判定"
+      checks:
+        - type: gate_aggregate
+          rule: "G2.1 = pass AND G2.3.hard = pass AND G2.4 = pass"
+          detail: "G2.1/G2.3.hard/G2.4 必须全部通过"
+      on_fail: block_and_retry
+
+  # ═══════════════════ Phase 3: 代码生成 ═══════════════════
+  stage-3:
+    - id: G3.1
+      name: 需求可构建性
+      type: hard
+      stage: 3
+      description: "需求状态允许构建且 KB 上下文有效"
+      checks:
+        - type: status_valid
+          rule: "需求 status ∈ [proposed, designed, planned]"
+          detail: "需求状态必须是 proposed/designed/planned"
+        - type: kb_references_valid
+          rule: "需求 kb_context 中引用的所有文件仍然存在"
+          detail: "KB 上下文引用文件存在性检查"
+      on_fail: block_and_retry
+
+    - id: G3.2
+      name: Design阶段质量
+      type: mixed
+      stage: 3
+      description: "设计文档存在且质量达标"
+      hard:
+        - type: file_exists
+          rule: "design.md 存在且非空"
+          detail: "design.md 文件存在"
+        - type: file_exists
+          rule: "delta spec 文件存在"
+          detail: "Delta spec 文件存在"
+        - type: comet_guard_pass
+          rule: "comet-guard 返回 ALL CHECKS PASSED"
+          detail: "Comet guard 通过"
+        - type: baseline_respect
+          rule: "设计方案未将任何 baseline 需求（usage_restriction: reference_only）作为强制约束"
+          detail: "基线需求用途限制遵守检查"
+        - type: baseline_conflict
+          rule: "如果设计方案与某个 baseline 需求冲突，已明确记录偏离理由"
+          detail: "基线需求偏离记录检查"
+      soft:
+        - rule: "设计方案不违反 architecture/overview.md 中的架构约束"
+          detail: "LLM 评估架构约束遵从度"
+        - rule: "delta spec 覆盖了影响分析中的所有涉及模块"
+          detail: "LLM 评估 spec 覆盖度"
+        - rule: "API 契约变更与 KB 中记录的现有契约兼容或明确标注 breaking change"
+          detail: "LLM 评估 API 契约兼容性"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G3.3
+      name: Plan阶段质量
+      type: mixed
+      stage: 3
+      description: "实现计划结构正确且粒度合理"
+      hard:
+        - type: task_ids_unique
+          rule: "所有 task 有唯一编号"
+          detail: "Task 编号唯一性"
+        - type: task_spec_link
+          rule: "每个 task 关联到具体的 spec delta"
+          detail: "Task 与 spec delta 关联"
+        - type: no_circular
+          rule: "无循环依赖（task 引用链无环）"
+          detail: "循环依赖检查"
+      soft:
+        - rule: "task 粒度合理（预估每个 task < 200 行变更）"
+          detail: "LLM 评估 task 粒度"
+        - rule: "task 顺序符合依赖逻辑"
+          detail: "LLM 评估 task 顺序"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G3.4
+      name: Build阶段质量
+      type: hard
+      stage: 3
+      description: "所有 task 完成且测试通过"
+      checks:
+        - type: tasks_checked
+          rule: "所有 task checkbox 已勾选"
+          detail: "Task 完成状态"
+        - type: test_coverage
+          rule: "测试覆盖率不低于变更前"
+          detail: "测试覆盖率检查"
+        - type: lint_pass
+          rule: "无 linter 错误"
+          detail: "Lint 检查"
+        - type: guard_pass
+          rule: "devloop-guard build ALL CHECKS PASSED"
+          detail: "Build guard 通过"
+      on_fail: block_and_retry
+
+  # ═══════════════════ Phase 4: 验证与交付 ═══════════════════
+  stage-4:
+    - id: G4.1
+      name: 自动化验证
+      type: hard
+      stage: 4
+      description: "所有自动化测试和构建通过"
+      checks:
+        - type: exit_code_zero
+          rule: "所有测试通过（退出码=0）"
+          detail: "测试执行退出码为 0"
+        - type: exit_code_zero
+          rule: "构建成功（退出码=0）"
+          detail: "构建执行退出码为 0"
+        - type: exit_code_zero
+          rule: "Lint / Type Check 零错误（退出码=0）"
+          detail: "Lint/TypeCheck 退出码为 0"
+      on_fail: block_and_retry
+
+    - id: G4.2
+      name: 代码审查
+      type: mixed
+      stage: 4
+      description: "代码审查报告存在且无严重问题"
+      hard:
+        - type: file_exists
+          rule: "审查报告存在"
+          detail: "审查报告文件存在"
+        - type: count
+          rule: "无 Critical 级别问题（通过审查输出计数判定）"
+          detail: "Critical 问题计数为 0"
+      soft:
+        - rule: "审查覆盖了正确性/安全性/性能/可维护性/复用性五个维度"
+          detail: "LLM 评估审查维度覆盖"
+        - rule: "审查意见有具体代码位置引用"
+          detail: "LLM 评估审查意见精确度"
+      on_fail:
+        hard: block_and_retry
+        soft: warn_and_continue
+
+    - id: G4.3
+      name: 修复循环限制
+      type: hard
+      stage: 4
+      description: "修复循环次数在限制内且不引入新问题"
+      checks:
+        - type: count
+          rule: "修复循环次数 < 3"
+          detail: "修复尝试次数不超过 3 次"
+        - type: no_new_critical
+          rule: "每次修复后不引入新的 Critical 问题"
+          detail: "修复不引入新 Critical 问题"
+      on_fail: pause_for_human
+
+    - id: G4.4
+      name: 阶段四总门禁
+      type: hard
+      stage: 4
+      description: "阶段四所有硬门禁的汇总判定"
+      checks:
+        - type: gate_aggregate
+          rule: "G4.1 = pass AND G4.2.hard = pass AND G4.3 未超限"
+          detail: "G4.1/G4.2.hard 必须通过，G4.3 不能超限"
+        - type: acceptance_met
+          rule: "需求文档中的所有验收标准全部满足"
+          detail: "验收标准覆盖"
+        - type: kb_consistency
+          rule: "KB 一致性：代码变更未破坏 KB 中的 API 契约"
+          detail: "KB 一致性检查"
+        - type: git_clean
+          rule: "Git 状态干净（无未暂存变更）"
+          detail: "Git 状态检查"
+      on_fail: block_and_retry
+
+  # ═══════════════════ Phase 5: 闭环 ═══════════════════
+  stage-5:
+    - id: G5.1
+      name: 闭环状态一致性
+      type: hard
+      stage: 5
+      description: "需求状态与目录一致，活跃需求有效，无孤儿需求"
+      checks:
+        - type: status_dir_consistency
+          rule: "需求文档 frontmatter.status 与所在目录一致"
+          detail: "需求状态与存放目录对应"
+        - type: active_req_valid
+          rule: "loop-state.yaml 中的 active_requirement 指向有效需求"
+          detail: "活跃需求有效性"
+        - type: no_orphans
+          rule: "无孤儿需求（文档存在但未被任何索引引用）"
+          detail: "孤儿需求检查"
+      on_fail: block_and_retry
+
+# ─── on_fail 策略说明 ───
+# block_and_retry:  阻断并自动重试（最多 3 次）
+# warn_and_continue: 记录警告并继续
+# reject:            直接拒绝，返回给调用方
+# pause_for_human:   暂停等待人工决策
+
+# ─── 软门禁约束（由 devloop-guard validate-config 强制检查）─
+# soft 类型的门禁只能使用 warn_and_continue 或 pause_for_human
+# soft 门禁警告写入 .drift-report.yaml 的 soft_gate_warnings 字段

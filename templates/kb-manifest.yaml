@@ -1,0 +1,20 @@
+# KB 模块清单
+# 由阶段一（逆向分析）自动生成，阶段二/三查询使用
+# 每次逆向分析后增量更新
+
+modules: {{ modules }}
+  # - name: {{ module_name }}
+  #   path: {{ module_path }}
+  #   type: {{ module_type }}
+  #   keywords: {{ keywords }}
+  #   entities: {{ entities }}
+  #   apis: {{ apis }}
+  #   files: {{ file_count }}
+  #   total_tokens_estimate: {{ total_tokens }}
+  #   summary_tokens_estimate: {{ summary_tokens }}
+  #   last_analyzed: {{ last_analyzed }}
+  #   confidence: {{ confidence }}
+
+generated_at: {{ generated_at }}
+generated_by: {{ generated_by }}
+total_modules: {{ total_modules }}

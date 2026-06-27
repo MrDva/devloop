@@ -1,0 +1,437 @@
+#!/usr/bin/env bash
+# comet-state — DevLoop 状态管理脚本
+# 用途: 管理 loop-state.yaml 的初始化、读写、checkpoint、恢复
+# 依赖: bash 4.x, grep, sed, awk (yq 可选，不可用时降级为 grep/sed)
+# 用法: comet-state <command> [args...]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+STATE_FILE="$PROJECT_ROOT/.comet/loop-state.yaml"
+
+# ─── 工具检测 ───────────────────────────────────────────
+has_yq() { command -v yq &>/dev/null; }
+has_jq() { command -v jq &>/dev/null; }
+
+# ─── 内部: YAML 字段读取（grep/sed 降级模式） ──────────
+# 从 YAML 中提取字段值。key 是字段名（不含缩进和冒号）。
+yaml_get() {
+  local file="$1" key="$2"
+
+  if [[ ! -f "$file" ]]; then
+    echo ""
+    return 0
+  fi
+
+  # 精确匹配: ^任意空格 + key + : + 空格/引号 + 值
+  grep -E "^[[:space:]]*${key}:" "$file" 2>/dev/null | head -1 \
+    | sed 's/^[^:]*:[[:space:]]*//' \
+    | sed 's/^"//;s/"$//' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+# ─── 内部: YAML 简化写入 ────────────────────────────────
+# key 是字段名（不含缩进和冒号）。匹配并替换第一个出现的该字段。
+yaml_set() {
+  local file="$1" key="$2" value="$3"
+  local tmp="${file}.tmp.$$"
+
+  if ! grep -qE "^[[:space:]]*${key}:" "$file" 2>/dev/null; then
+    # 字段不存在 → 追加到文件末尾
+    cp "$file" "$tmp"
+    echo "${key}: \"${value}\"" >> "$tmp"
+    mv "$tmp" "$file"
+  else
+    # 字段存在 → 替换整行（保留原有缩进）
+    sed -E "s|^([[:space:]]*)${key}:.*|\1${key}: \"${value}\"|" "$file" > "$tmp"
+    mv "$tmp" "$file"
+  fi
+}
+
+# ─── 内部: 生成时间戳 ────────────────────────────────────
+now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+# ═══════════════════════════════════════════════════════════
+# 子命令实现
+# ═══════════════════════════════════════════════════════════
+
+cmd_init() {
+  local change_name="${1:-}"
+  if [[ -z "$change_name" ]]; then
+    echo "Usage: comet-state init <change-name>" >&2
+    return 1
+  fi
+
+  local ts
+  ts=$(now_iso)
+
+  # 如果状态文件已存在，备份
+  if [[ -f "$STATE_FILE" ]]; then
+    cp "$STATE_FILE" "${STATE_FILE}.bak.$(date +%s)"
+    echo "  📋 已备份旧状态文件"
+  fi
+
+  cat > "$STATE_FILE" <<STATEFILE
+# DevLoop 运行时状态
+# 自动生成，请勿手动编辑 — 使用 comet-state 命令操作
+devloop:
+  version: "1.0"
+  updated: "${ts}"
+  change_name: "${change_name}"
+  current_stage: 0
+  current_step: ""
+  active_requirement:
+    id: ""
+    title: ""
+    change_name: ""
+  checkpoint:
+    stage: 0
+    step: ""
+    last_action: "init"
+    timestamp: "${ts}"
+    git_commit: "$(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')"
+  completed_steps: {}
+  gate_results: {}
+  pending_confirmations: []
+  errors: []
+STATEFILE
+
+  echo "✅ loop-state.yaml 已初始化 (change: ${change_name})"
+}
+
+cmd_get() {
+  local key="${1:-}"
+  if [[ -z "$key" ]]; then
+    echo "Usage: comet-state get <key>" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在，请先运行: comet-state init <name>" >&2
+    return 1
+  fi
+
+  if has_yq; then
+    yq ".${key}" "$STATE_FILE"
+  else
+    yaml_get "$STATE_FILE" "$key"
+  fi
+}
+
+cmd_set() {
+  local key="${1:-}" value="${2:-}"
+  if [[ -z "$key" ]]; then
+    echo "Usage: comet-state set <key> <value>" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在，请先运行: comet-state init <name>" >&2
+    return 1
+  fi
+
+  if has_yq; then
+    yq -i ".${key} = \"${value}\"" "$STATE_FILE"
+  else
+    yaml_set "$STATE_FILE" "$key" "$value"
+  fi
+
+  # 更新 updated 时间戳
+  yaml_set "$STATE_FILE" "updated" "$(now_iso)"
+
+  echo "  ${key} = ${value}"
+}
+
+cmd_checkpoint() {
+  local stage="${1:-}" step="${2:-}" desc="${3:-}"
+  if [[ -z "$stage" || -z "$step" ]]; then
+    echo "Usage: comet-state checkpoint <stage> <step> \"<description>\"" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在，请先运行: comet-state init <name>" >&2
+    return 1
+  fi
+
+  local ts commit
+  ts=$(now_iso)
+  commit=$(git rev-parse --short HEAD 2>/dev/null || echo 'N/A')
+
+  # 更新 checkpoint 相关字段（值不引号，yaml_set 负责加引号）
+  yaml_set "$STATE_FILE" "stage" "$stage"
+  yaml_set "$STATE_FILE" "step" "$step"
+  yaml_set "$STATE_FILE" "last_action" "$desc"
+  yaml_set "$STATE_FILE" "timestamp" "$ts"
+  yaml_set "$STATE_FILE" "git_commit" "$commit"
+
+  # 更新全局字段
+  yaml_set "$STATE_FILE" "current_stage" "$stage"
+  yaml_set "$STATE_FILE" "current_step" "$step"
+  yaml_set "$STATE_FILE" "updated" "$ts"
+
+  echo "💾 Checkpoint: Stage ${stage}.${step} — ${desc}"
+  echo "   timestamp: ${ts}"
+  echo "   commit: ${commit}"
+}
+
+cmd_complete_step() {
+  local stage="${1:-}" step="${2:-}"
+  if [[ -z "$stage" || -z "$step" ]]; then
+    echo "Usage: comet-state complete-step <stage> <step>" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在" >&2
+    return 1
+  fi
+
+  local ts
+  ts=$(now_iso)
+
+  # 追加到 completed_steps
+  local entry="      - step: ${step}\\n        status: completed\\n        timestamp: \"${ts}\""
+
+  if grep -q "completed_steps:" "$STATE_FILE"; then
+    # 在 completed_steps 块后追加
+    awk -v entry="      - step: ${step}"$'\\n'"        status: completed"$'\\n'"        timestamp: \"${ts}\"" '
+      /^  completed_steps:/ { print; print entry; next }
+      { print }
+    ' "$STATE_FILE" > "${STATE_FILE}.tmp.$$"
+    # 简化方案：直接追加到文件末尾的 completed_steps 区域
+    cp "$STATE_FILE" "${STATE_FILE}.tmp.$$"
+    # 查找 stage-X 行，在其后追加
+    if grep -q "stage-${stage}:" "${STATE_FILE}.tmp.$$"; then
+      sed -i "/stage-${stage}:/a\\${entry}" "${STATE_FILE}.tmp.$$"
+    else
+      # 新增 stage 条目
+      sed -i "/completed_steps:/a\\    stage-${stage}:\n${entry}" "${STATE_FILE}.tmp.$$"
+    fi
+    mv "${STATE_FILE}.tmp.$$" "$STATE_FILE"
+  fi
+
+  echo "✅ Step ${stage}.${step} 完成"
+}
+
+cmd_gate_result() {
+  local gate_id="${1:-}" result="${2:-}" msg="${3:-}"
+  if [[ -z "$gate_id" || -z "$result" ]]; then
+    echo "Usage: comet-state gate-result <gate-id> <pass|fail> [message]" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在" >&2
+    return 1
+  fi
+
+  local ts
+  ts=$(now_iso)
+
+  # 记录到 gate_results 区域
+  local entry="    ${gate_id}: { passed: $([[ "$result" == "pass" ]] && echo "true" || echo "false"), timestamp: \"${ts}\", message: \"${msg:-}\" }"
+
+  if grep -q "gate_results:" "$STATE_FILE"; then
+    if grep -q "${gate_id}:" "$STATE_FILE"; then
+      # 替换已有记录
+      sed -i "s|^\s*${gate_id}:.*|${entry}|" "$STATE_FILE"
+    else
+      sed -i "/gate_results:/a\\${entry}" "$STATE_FILE"
+    fi
+  fi
+
+  echo "📋 Gate ${gate_id}: ${result^^}$([[ -n "$msg" ]] && echo " — ${msg}")"
+}
+
+cmd_add_pending() {
+  local type="${1:-}" req="${2:-}" msg="${3:-}"
+  if [[ -z "$type" || -z "$req" ]]; then
+    echo "Usage: comet-state add-pending <type> <req> \"<message>\"" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "❌ 状态文件不存在" >&2
+    return 1
+  fi
+
+  local ts
+  ts=$(now_iso)
+
+  local entry="    - type: ${type}\\n      req: ${req}\\n      message: \"${msg:-}\"\\n      timestamp: \"${ts}\""
+
+  if grep -q "pending_confirmations:" "$STATE_FILE"; then
+    sed -i "/pending_confirmations:/a\\${entry}" "$STATE_FILE"
+  fi
+
+  echo "⏳ 待确认: [${type}] ${req} — ${msg}"
+}
+
+cmd_check() {
+  local name="${1:-}" phase="${2:-}" recover_flag="${3:-}"
+  if [[ -z "$name" ]]; then
+    echo "Usage: comet-state check <name> <phase> [--recover]" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "============================================================"
+    echo "Recovery Check: 状态文件不存在"
+    echo "============================================================"
+    echo ""
+    echo "Recovery action: fresh_start"
+    echo "  状态文件未找到 (.comet/loop-state.yaml)"
+    echo "  可能是首次运行或状态文件被删除。"
+    echo "  建议: 运行 comet-state init <name> 初始化新流程。"
+    echo ""
+    echo "ALL CHECKS PASSED (fresh start)"
+    return 0
+  fi
+
+  local current_stage current_step pending_count gate_fails
+  current_stage=$(yaml_get "$STATE_FILE" "current_stage")
+  current_step=$(yaml_get "$STATE_FILE" "current_step")
+  pending_count=$(grep -c 'type:' "$STATE_FILE" 2>/dev/null | tr -d '[:space:]'; true)
+  pending_count=${pending_count:-0}
+  gate_fails=$(grep -c 'passed: false' "$STATE_FILE" 2>/dev/null | tr -d '[:space:]'; true)
+  gate_fails=${gate_fails:-0}
+
+  echo "============================================================"
+  echo "Recovery Check: ${name} (phase: ${phase:-unknown})"
+  echo "============================================================"
+  echo ""
+  echo "Current stage:  ${current_stage:-N/A}"
+  echo "Current step:   ${current_step:-N/A}"
+  echo "Pending confirmations: ${pending_count}"
+  echo "Failed gates:   ${gate_fails}"
+
+  if [[ "$recover_flag" == "--recover" ]]; then
+    echo ""
+    echo "--- Recovery Action ---"
+    if [[ "$pending_count" -gt 0 ]]; then
+      echo "⚠️  有 ${pending_count} 个待确认项，优先处理。"
+      echo "   → 加载 devloop-resume Skill 恢复待确认上下文"
+      echo "   → 或运行: comet-state get pending_confirmations"
+      echo "  resume_from_pending: true"
+      echo "  pending_count: ${pending_count}"
+    fi
+    if [[ "$gate_fails" -gt 0 ]]; then
+      echo "⚠️  有 ${gate_fails} 个失败的门禁。"
+      echo "   → 检查: comet-state get gate_results"
+      echo "  gate_failures_present: true"
+    fi
+    if [[ -n "$current_step" && "$current_step" != '""' ]]; then
+      echo "  resume_from_step: ${current_step}"
+    fi
+    if [[ -n "$current_stage" && "$current_stage" != "0" ]]; then
+      echo "  resume_from_stage: ${current_stage}"
+    fi
+  fi
+
+  echo ""
+  echo "ALL CHECKS PASSED"
+}
+
+cmd_scale() {
+  local name="${1:-}"
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "============================================================"
+    echo "Scale: 无活跃流程"
+    echo "============================================================"
+    return 0
+  fi
+
+  local current_stage current_step active_req completed_count
+  current_stage=$(yaml_get "$STATE_FILE" "current_stage")
+  current_step=$(yaml_get "$STATE_FILE" "current_step")
+  active_req=$(yaml_get "$STATE_FILE" "id")
+  completed_count=$(grep -c 'status: completed' "$STATE_FILE" 2>/dev/null | tr -d '[:space:]'; true)
+  completed_count=${completed_count:-0}
+
+  echo "============================================================"
+  echo "DevLoop State Summary"
+  echo "============================================================"
+  echo ""
+  echo "Change:     $(yaml_get "$STATE_FILE" "change_name")"
+  echo "Stage:      ${current_stage:-N/A}"
+  echo "Step:       ${current_step:-N/A}"
+  echo "Active Req: ${active_req:-none}"
+  echo "Completed:  ${completed_count} steps"
+  echo "Updated:    $(yaml_get "$STATE_FILE" "updated")"
+
+  local pending_count pending_count_raw
+  pending_count_raw=$(grep -c 'type:' "$STATE_FILE" 2>/dev/null; true)
+  pending_count=$(echo "$pending_count_raw" | tr -d '[:space:]')
+  pending_count=${pending_count:-0}
+  if [[ "$pending_count" -gt 0 ]]; then
+    echo ""
+    echo "⏳ Pending confirmations: ${pending_count}"
+    grep -A3 'type:' "$STATE_FILE" 2>/dev/null | grep -E 'type:|req:|message:' | sed 's/^/  /'
+  fi
+
+  echo "============================================================"
+}
+
+cmd_list_pending() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "(无待确认项)"
+    return 0
+  fi
+  echo "待确认项:"
+  grep -A3 'type:' "$STATE_FILE" 2>/dev/null | grep -E 'type:|req:|message:' | sed 's/^\s*//' || echo "(无)"
+}
+
+# ═══════════════════════════════════════════════════════════
+# 主入口
+# ═══════════════════════════════════════════════════════════
+
+print_usage() {
+  echo "Usage: comet-state <command> [args...]"
+  echo ""
+  echo "Commands:"
+  echo "  init <change-name>                 初始化状态文件"
+  echo "  get <key>                          读取字段值"
+  echo "  set <key> <value>                  设置字段值"
+  echo "  checkpoint <stage> <step> <desc>   保存断点"
+  echo "  complete-step <stage> <step>       标记步骤完成"
+  echo "  gate-result <gate-id> <pass|fail> [msg]  记录门禁结果"
+  echo "  add-pending <type> <req> <msg>     添加待确认项"
+  echo "  list-pending                       列出待确认项"
+  echo "  check <name> <phase> [--recover]   恢复检查"
+  echo "  scale [name]                       显示状态摘要"
+  echo ""
+  echo "Examples:"
+  echo "  comet-state init my-change"
+  echo "  comet-state set current_stage 2"
+  echo "  comet-state get current_stage"
+  echo "  comet-state checkpoint 2 2.3 \"影响分析完成\""
+  echo "  comet-state check my-change build --recover"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+
+  case "$cmd" in
+    init)          cmd_init "$@" ;;
+    get)           cmd_get "$@" ;;
+    set)           cmd_set "$@" ;;
+    checkpoint)    cmd_checkpoint "$@" ;;
+    complete-step) cmd_complete_step "$@" ;;
+    gate-result)   cmd_gate_result "$@" ;;
+    add-pending)   cmd_add_pending "$@" ;;
+    list-pending)  cmd_list_pending "$@" ;;
+    check)         cmd_check "$@" ;;
+    scale)         cmd_scale "$@" ;;
+    help|--help|-h) print_usage ;;
+    *)
+      echo "❌ 未知命令: $cmd" >&2
+      print_usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

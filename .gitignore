@@ -46,3 +46,6 @@ package.json
 skills-lock.json
 # Explorer outputs
 explorer/outputs/
+!.comet/scripts/
+!.comet/guard-config.yaml
+!.claude/skills/devloop-resume/
