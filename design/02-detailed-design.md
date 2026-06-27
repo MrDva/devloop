@@ -66,6 +66,8 @@ codegraph_explore("列出项目的所有顶层模块和组件")
 **输入**: 模块清单  
 **产出**: 每个模块的 KB 条目
 
+> **细粒度拆分策略见第 14.2 节**: 单模块上下文控制在 < 50K tokens，超大模块进一步拆分为子模块。
+
 对每个模块并行调用 `comet-knowledge`:
 ```
 comet-knowledge --module <module-name> --path <module-path>
@@ -230,13 +232,18 @@ related_modules: []
 
 #### 2.2.2 KB 上下文加载
 
-根据输入中指定的 `related_modules` 或自动匹配，加载相关知识库：
+根据输入中指定的 `related_modules` 或自动匹配，加载相关知识库。
+
+> **详细设计见第 14 节**: 索引式按需加载策略。本节为基础流程。
 
 ```
-1. 关键词匹配: 输入描述 → KB 模块索引
-2. 加载匹配模块的 KB 条目
-3. 加载全局 architecture + apis + data-models
+1. 关键词匹配: 输入描述 → KB 模块索引 (.manifest.yaml keywords 字段)
+2. 按相关度排序，Top-N 匹配
+3. 加载匹配模块的 KB 条目（优先 overview.md，token 不足时降级为摘要）
+4. 加载全局 architecture + apis + data-models（摘要层）
 ```
+
+**上下文预算控制**: 见第 14.3 节预算分配表。超出预算时自动降级为摘要层加载。
 
 **门禁 G2.2** — 上下文相关性:
 - 规则: 至少匹配到 1 个相关模块
@@ -480,12 +487,15 @@ comet-state scale <name>     # 确定验证级别
 comet-guard <name> verify    # 运行验证
 ```
 
+**验证策略**: 聚焦输出正确性，不要求环境一致性。详见第 15 节。
+
 验证内容：
 - 单元测试全通过
 - 集成测试全通过（如有）
 - 构建成功
 - Lint 零错误
 - 类型检查通过
+- 需求验收标准逐条覆盖（而非覆盖率数值指标）
 
 **门禁 G4.1** — 自动化验证:
 - [ ] 所有测试通过
@@ -621,6 +631,35 @@ triggers:
 2. **变量化**: 使用 `{{ variable }}` 语法，运行时填充
 3. **版本化**: 模板自身纳入 Git，变更可追溯
 4. **可组合**: 模板之间可以相互引用 (`{{> partial }}`)
+
+#### 6.1.1 模板引擎说明
+
+**模板格式**: Markdown + `{{ variable }}` 占位符。模板本身是标准的 `.md` 文件，包含 `{{ }}` 包裹的变量占位符。
+
+**模板变量**: 占位符对应需求数据、KB 数据或用户输入的字段。例如：
+- `{{ title }}` — 需求标题
+- `{{ priority }}` — 优先级（high/medium/low）
+- `{{ req_id }}` — 需求唯一 ID
+- `{{ primary_module }}` — 主影响模块名
+- `{{#each kb_contexts}}...{{/each}}` — 循环遍历 KB 上下文列表
+
+**渲染方式**: 由于所有生成均由 Claude (LLM) 完成，**不需要独立的模板引擎程序**（无需 Handlebars/Jinja）。渲染流程：
+1. LLM 读取模板文件（Markdown + 占位符）
+2. LLM 接收数据上下文（需求 frontmatter、KB 条目、用户输入等）
+3. LLM 将占位符替换为实际值，生成最终文档
+4. 输出经过门禁校验
+
+**模板与普通 prompt 的区别**: 模板提供**结构化约束** — 强制输出必须包含特定章节、字段和格式，而非自由文本。这确保了产物的可解析性和一致性。
+
+#### 6.1.2 模板变量来源
+
+| 变量类别 | 来源 | 示例变量 |
+|---------|------|---------|
+| 需求元数据 | 用户输入 / 阶段二解析 | `title`, `type`, `priority`, `source` |
+| KB 上下文 | 知识库检索结果 | `kb_contexts`, `primary_module`, `dependencies` |
+| 影响分析 | brainstorming 产出 | `affected_modules`, `api_changes`, `data_model_changes` |
+| 流程状态 | loop-state.yaml | `status`, `created_date`, `updated_date` |
+| 验收标准 | 用户输入 + AI 推导 | `acceptance_criteria` |
 
 ### 6.2 模板清单
 
@@ -992,6 +1031,8 @@ def save_checkpoint(stage, step, action, context):
 
 ### 9.4 Knowledge Base 保鲜机制
 
+> **详细设计见第 16 节**: Git 驱动的 KB 保鲜定时触发。本节提供概览。
+
 ```
 问题: KB 是代码的镜像，代码变更后 KB 会过时
 
@@ -1000,14 +1041,25 @@ def save_checkpoint(stage, step, action, context):
    - 只更新受影响的模块 KB 条目
    - 通过 codegraph 对比变更前后的符号差异
    
-2. 定时巡检（每周）
-   - 全量对比代码符号与 KB 条目
-   - 生成 KB 漂移报告
-   - 漂移超过阈值 → 触发阶段一增量逆向
+2. 定时巡检（每周 + 每月）
+   - 每周: 全量扫描，生成漂移报告（不自动修改）
+   - 每月: 全量扫描，自动修复高置信度漂移项
+   - 详见第 16.2 节触发配置
    
-3. Git Hook 触发
-   - pre-commit hook: 检查即将提交的代码是否影响 KB
-   - 如果影响 → 提示需要同步更新 KB
+3. Git 变更驱动的增量更新
+   - git diff 检测自上次 KB 更新以来的代码变更
+   - 映射变更文件 → 受影响模块
+   - 仅对受影响模块做增量逆向
+   - 详见第 16.3 节
+   
+4. 手动触发
+   - 命令: /devloop kb-fresh --scope <module|all> --mode <report|fix>
+   - 用于重大变更后或代码审查前的主动保鲜
+
+5. 漂移阻断
+   - drift_score > 0.3 的模块阻断阶段三
+   - 全局平均 drift_score > 0.2 阻断所有阶段
+   - 详见第 13.3 节
 ```
 
 ---
@@ -1016,50 +1068,53 @@ def save_checkpoint(stage, step, action, context):
 
 ### 10.1 技术类
 
-| # | 问题 | 影响 | 建议 |
-|---|------|------|------|
-| T1 | **跨仓库需求**: 需求可能涉及多个代码仓库 | 阶段三需要跨仓库协调 | 引入 `repo-manifest.yaml`，定义多仓库拓扑 |
-| T2 | **KB 规模膨胀**: 大项目的 KB 可能超出 AI 上下文窗口 | 阶段二/三无法加载完整上下文 | 实现 KB 分层加载（摘要 → 详细 → 完整），RAG 式检索 |
-| T3 | **并发需求冲突**: 两个需求修改同一文件 | Git merge conflict | 需求依赖分析 + 分支隔离 + 合并队列 |
-| T4 | **非功能需求**: 性能/安全/可访问性需求难以从代码逆向 | 阶段一遗漏非功能需求 | 添加非功能需求检查清单模板，阶段二强制评估 |
-| T5 | **测试代码的理解**: 测试代码本身也是知识来源 | 阶段一可能忽略测试中的隐含需求 | 将测试文件纳入逆向分析，提取用例作为验收标准 |
-| T6 | **外部依赖变化**: 第三方 API 变更影响项目 | KB 中的外部 API 描述过时 | 阶段一增加外部依赖扫描，定期检查 changelog |
+| # | 问题 | 影响 | 状态 | 解决方案 |
+|---|------|------|------|---------|
+| T1 | **跨仓库需求**: 需求可能涉及多个代码仓库 | 阶段三需要跨仓库协调 | 🟡 待解决 | 引入 `repo-manifest.yaml`，定义多仓库拓扑 |
+| T2 | **KB 规模膨胀**: 大项目的 KB 可能超出 AI 上下文窗口 | 阶段二/三无法加载完整上下文 | ✅ 已解决 | 见第 14 节：细粒度模块拆分 + 索引式按需加载 |
+| T3 | **并发需求冲突**: 两个需求修改同一文件 | Git merge conflict | 🟡 已预留 | 见第 17 节：并发锁预留机制（仅预留设计，当前串行） |
+| T4 | **非功能需求**: 性能/安全/可访问性需求难以从代码逆向 | 阶段一遗漏非功能需求 | 🟡 待解决 | 添加非功能需求检查清单模板，阶段二强制评估 |
+| T5 | **测试代码的理解**: 测试代码本身也是知识来源 | 阶段一可能忽略测试中的隐含需求 | 🟡 待解决 | 将测试文件纳入逆向分析，提取用例作为验收标准 |
+| T6 | **外部依赖变化**: 第三方 API 变更影响项目 | KB 中的外部 API 描述过时 | ✅ 已解决 | 见第 16 节：Git 驱动的定时保鲜 + 外部依赖扫描 |
 
 ### 10.2 流程类
 
-| # | 问题 | 影响 | 建议 |
-|---|------|------|------|
-| P1 | **长流程疲劳**: 大需求的完整 5 阶段可能需要数小时 | 会话超时，注意力分散 | 支持分段执行，每阶段可独立触发 |
-| P2 | **确认点积压**: 多个需求同时到达人工确认点 | 用户成为瓶颈 | 确认点优先级队列，支持批量确认 |
-| P3 | **回滚复杂性**: 阶段四发现严重问题需要回滚到阶段二 | 大量工作浪费 | 阶段三早期（Design 后）做最小可行性验证 |
-| P4 | **需求变更**: 实现过程中需求被修改 | 已完成工作可能无效 | 需求版本号 + diff 追踪，变更时自动评估影响 |
-| P5 | **环境一致性**: 不同开发者机器上运行结果不同 | 验证结果不可复现 | Docker 化运行环境，或使用 git worktree 隔离 |
+| # | 问题 | 影响 | 状态 | 解决方案 |
+|---|------|------|------|---------|
+| P1 | **长流程疲劳**: 大需求的完整 5 阶段可能需要数小时 | 会话超时，注意力分散 | 🟡 待解决 | 支持分段执行，每阶段可独立触发 |
+| P2 | **确认点积压**: 多个需求同时到达人工确认点 | 用户成为瓶颈 | ✅ 已解决 | 见第 12 节：确认策略分级 + 批量确认 |
+| P3 | **回滚复杂性**: 阶段四发现严重问题需要回滚到阶段二 | 大量工作浪费 | 🟡 待解决 | 阶段三早期（Design 后）做最小可行性验证 |
+| P4 | **需求变更**: 实现过程中需求被修改 | 已完成工作可能无效 | ✅ 已解决 | 见第 18 节：需求变更策略（supersedes/replaces + 版本追溯） |
+| P5 | **环境一致性**: 不同开发者机器上运行结果不同 | 验证结果不可复现 | ✅ 已解决 | 见第 15 节：聚焦输出正确性（测试通过 = 正确） |
 
 ### 10.3 组织类
 
-| # | 问题 | 影响 | 建议 |
-|---|------|------|------|
-| O1 | **角色与权限**: 谁可以接受需求？谁可以确认跳过门禁？ | 安全与合规 | 需求文档 frontmatter 添加 `author`/`reviewer` 字段 |
-| O2 | **需求溯源**: 完成后需要知道需求来源 | 审计追踪断裂 | 需求文档添加完整溯源链（source → intake → code → deploy）|
-| O3 | **知识所有权**: KB 由谁维护？AI 自动更新是否可信？ | KB 质量可能下降 | AI 更新的 KB 条目标记 `auto-generated`，定期人工审核 |
-| O4 | **团队协作**: 多人同时使用 DevLoop | 状态冲突 | 基于 Git 分支的隔离 + 锁定机制 |
+| # | 问题 | 影响 | 状态 | 解决方案 |
+|---|------|------|------|---------|
+| O1 | **角色与权限**: 谁可以接受需求？谁可以确认跳过门禁？ | 安全与合规 | 🟡 待解决 | 需求文档 frontmatter 添加 `author`/`reviewer` 字段 |
+| O2 | **需求溯源**: 完成后需要知道需求来源 | 审计追踪断裂 | ✅ 已解决 | 见第 18 节：需求文档完整溯源链（source → intake → code → deploy）+ version_history |
+| O3 | **知识所有权**: KB 由谁维护？AI 自动更新是否可信？ | KB 质量可能下降 | ✅ 已解决 | 见第 13 节：三级信任体系 + auto-generated/human-reviewed 标记 |
+| O4 | **团队协作**: 多人同时使用 DevLoop | 状态冲突 | ✅ 已解决 | **当前范围: 单开发者**。未来扩展见第 17 节并发锁预留 |
 
 ### 10.4 质量类
 
-| # | 问题 | 影响 | 建议 |
-|---|------|------|------|
-| Q1 | **需求推断偏差**: AI 从代码推断的需求可能不准确 | 基线需求误导后续开发 | 基线需求标记 `inferred` + `confidence` 分数，低置信度需求优先人工审核 |
-| Q2 | **门禁疲劳**: 门禁过多导致开发变慢 | 团队可能绕过门禁 | 门禁分级（必须/建议/可选），紧急模式可降级 |
-| Q3 | **测试生成质量**: AI 生成的测试可能脆弱或无效 | 虚假的安全感 | 测试有效性检查（mutation testing），低质量测试自动重写 |
-| Q4 | **知识漂移累积**: KB 保鲜不及时，漂移逐渐扩大 | 后续需求质量下降 | 设置漂移阈值自动阻断（漂移 > 20% → 强制重新逆向） |
+| # | 问题 | 影响 | 状态 | 解决方案 |
+|---|------|------|------|---------|
+| Q1 | **需求推断偏差**: AI 从代码推断的需求可能不准确 | 基线需求误导后续开发 | ✅ 已解决 | 见第 13 节：confidence 分数 + inferred 标记 + 低置信度需求优先人工审核 |
+| Q2 | **门禁疲劳**: 门禁过多导致开发变慢 | 团队可能绕过门禁 | 🟡 待解决 | 门禁分级（必须/建议/可选），紧急模式可降级 |
+| Q3 | **测试生成质量**: AI 生成的测试可能脆弱或无效 | 虚假的安全感 | 🟡 待解决 | 测试有效性检查（mutation testing），低质量测试自动重写 |
+| Q4 | **知识漂移累积**: KB 保鲜不及时，漂移逐渐扩大 | 后续需求质量下降 | ✅ 已解决 | 见第 13 节 + 第 16 节：漂移阈值自动阻断 + 定时保鲜触发 |
 
 ### 10.5 尚未覆盖的边界情况
 
-1. **空项目启动**: 全新项目无代码可逆向，流程从何处开始？
-2. **Legacy 代码**: 无测试、无文档的老代码如何保证逆向质量？
-3. **Mono-repo 超大项目**: 10万+文件级别的项目如何分段逆向？
-4. **多语言项目**: 包含 TypeScript + Python + Rust 的项目如何处理？
-5. **需求废弃**: 进行中的需求被取消，如何清理残留状态？
+| # | 边界情况 | 状态 |
+|---|---------|------|
+| B1 | **空项目启动**: 全新项目无代码可逆向 | 🟡 待解决: 初次使用时提供骨架 KB 模板，从阶段二直接开始 |
+| B2 | **Legacy 代码**: 无测试、无文档的老代码 | 🟡 待解决: 阶段一降低 confidence，强制标记 tentative |
+| B3 | **Mono-repo 超大项目**: 10万+文件 | ✅ 已解决: 见第 14 节细粒度拆分策略 |
+| B4 | **多语言项目**: TypeScript + Python + Rust | 🟡 待解决: 阶段一按语言分治，KB 条目标记 language 字段 |
+| B5 | **需求废弃**: 进行中的需求被取消 | ✅ 已解决: 见第 18 节，标记 blocked/superseded |
+| B6 | **重名符号处理**: 多语言/多模块同名的函数或类 | 🟡 待解决: 通过 codegraph 的 file/line 消歧 + KB entry 命名空间隔离 |
 
 ---
 
@@ -1158,4 +1213,407 @@ Skill 加载时:
   - 创建新 Skill，实现相同接口
   - 修改 project 级 Skill registry
   - 新 Skill 接管该阶段
+```
+
+---
+
+## 12. 确认策略分级
+
+### 12.1 设计原则
+
+**默认高保障**: 除非明确降级，所有需求使用最高确认级别（Level 3）。高保障是默认值，用户可主动降级但不能被系统自动降级。
+
+### 12.2 三个确认级别
+
+| 级别 | 名称 | 确认点 | 适用场景 | 用户操作 |
+|------|------|--------|---------|---------|
+| **Level 3** (默认) | 高保障 | 🔴 需求内容 + 🔴 设计方案 + 🔴 实现计划 + 🔴 验证失败决策 | `priority: high` 的 feature、涉及 >3 模块的变更、安全相关 | 每个确认点主动暂停等待 |
+| **Level 2** | 标准保障 | 🟡 设计方案 + 🟡 验证失败决策（跳过需求内容确认和实现计划确认） | `priority: medium` 的 feature、重构 | Design 后确认，Plan 自动通过 |
+| **Level 1** | 快速通道 | 🟢 仅验证失败决策（全自动推进至阶段四） | `priority: low` 的 bugfix、小改动、`type: chore` | 无人干预，仅异常时介入 |
+
+### 12.3 确认级别判定
+
+```yaml
+# 确认级别判定逻辑
+determine_confirmation_level:
+  default: Level 3  # 默认高保障
+  
+  auto_downgrade_allowed:
+    - condition: "type == 'bugfix' and priority == 'low'"
+      level: Level 1
+    - condition: "type == 'chore'"
+      level: Level 1
+    - condition: "priority == 'medium' and affected_modules <= 3"
+      level: Level 2
+  
+  manual_override: true  # 用户可随时调整任何需求的确认级别
+  
+  cannot_downgrade:  # 以下场景禁止降级
+    - "type == 'security'"
+    - "affected_modules > 5"
+    - "data_model_changes includes 'migration'"
+```
+
+### 12.4 确认点行为
+
+每个确认点暂停时：
+1. 展示当前产物摘要（需求文档/设计方案/实现计划）
+2. 列出关键决策点和风险
+3. 提供选项：✅ 确认 / ✏️ 修改 / ⏭️ 跳过（需权限）/ ❌ 放弃
+4. 记录确认决策到 `loop-state.yaml` 和 memory 文件
+5. 超时策略：24 小时无响应 → 标记为 `awaiting_confirmation` 状态，不自动推进
+
+### 12.5 批量确认（优化）
+
+当 pipeline 中存在多个同级别需求的确认点时，支持**批量确认**：
+- 展示需求列表 + 每个需求的关键变更摘要
+- 用户可一次性确认全部 / 逐条确认 / 选择性跳过
+- 在 `loop-state.yaml` 中维护确认队列
+
+---
+
+## 13. 知识库防御机制
+
+### 13.1 知识条目可信度标记
+
+每个 KB 条目 frontmatter 必须包含：
+
+```yaml
+---
+module: auth-service
+source: auto-generated        # auto-generated | human-reviewed | hybrid
+confidence: 0.85              # 0.0 - 1.0
+last_reviewed: 2026-06-27     # 最后审核日期
+reviewed_by: null             # null | human-identifier
+drift_score: 0.05             # 与当前代码的漂移度 (< 0.1 = 健康)
+generated_from:                # 来源追溯
+  - src/auth/login.ts
+  - src/auth/token.ts
+---
+```
+
+### 13.2 三级信任体系
+
+| 级别 | 标记 | 门禁行为 | 更新策略 |
+|------|------|---------|---------|
+| **Trusted** | `human-reviewed` + `confidence >= 0.9` + `drift_score < 0.05` | 正常通过，作为强依赖 | 仅人工更新或增量自动更新+人工审核 |
+| **Tentative** | `auto-generated` + `confidence >= 0.7` | 正常通过，附加 warning | 自动更新，标记 `auto-updated` |
+| **Untrusted** | `confidence < 0.7` 或 `drift_score > 0.2` | **阻断**: 必须先人工审核或触发重新逆向 | 阻止作为上下文使用，强制重建 |
+
+### 13.3 漂移检测与自动阻断
+
+```
+漂移检测时机:
+  1. 阶段一（逆向）: 对比 codegraph 符号与 KB 条目，计算 drift_score
+  2. 阶段四（验证）: 代码变更后检查受影响模块的 KB 条目是否过时
+  3. 定时巡检: 每周全量扫描（见第 9.4 节）
+
+阻断规则:
+  - 任意模块 drift_score > 0.3 → 阻断阶段三，强制触发该模块的增量逆向
+  - 全局平均 drift_score > 0.2 → 阻断所有阶段，建议全量逆向重建
+  - 低 confidence (<0.7) 的条目被 >3 个需求引用 → 阻断，要求人工审核
+```
+
+### 13.4 KB 条目交叉验证
+
+- 阶段一生成的 KB 条目（API 签名等）与 codegraph 实时查询结果交叉比对
+- 不一致时：降低 confidence，记录差异
+- 阶段四完成后：用实际代码变更结果反向验证 KB 条目准确性
+
+---
+
+## 14. KB 上下文窗口管理
+
+### 14.1 问题定义
+
+大项目的 KB 总体积可能超过 LLM 上下文窗口（~200K tokens），导致阶段二/三无法加载完整上下文。需要分层加载策略。
+
+### 14.2 逆向分析方向：细粒度模块拆分
+
+**原则**: 阶段一不分析"整个项目"，而是分析"每个最小可独立理解的模块"。
+
+```
+拆分策略:
+  1. codegraph 扫描 → 识别物理模块（目录/包）
+  2. 每个模块独立分析，单模块上下文 < 50K tokens
+  3. 超大模块（>100 文件）进一步拆分为子模块
+  4. 每个模块生成独立的 KB 条目（相互引用而非重复内容）
+
+拆分粒度:
+  - 小型项目 (< 100 文件): 按顶层目录拆分
+  - 中型项目 (100-500 文件): 按二级目录拆分，子模块分组
+  - 大型项目 (500+ 文件): 按功能域拆分，多级 KB 目录树
+```
+
+**并行分析**: 各模块完全独立，使用并行 agent 同时分析（阶段一已设计并行），单个 agent 只看到自己负责的模块代码。
+
+### 14.3 需求摄入方向：索引式按需加载
+
+**原则**: 阶段二/三不加载完整 KB，只加载与当前需求相关的 KB 条目。
+
+```
+索引式加载流程:
+  1. 需求输入 → 关键词提取（模块名、函数名、数据实体）
+  2. 关键词 → KB 索引查询 (.manifest.yaml + frontmatter 字段)
+  3. 匹配结果排序（按相关度）
+  4. 加载 Top-N 相关条目（N 由上下文预算决定）
+  5. 如果匹配条目总 token 数 > 预算 → 加载摘要层（overview.md 优先于完整 api.md）
+
+索引结构 (knowledge-base/.manifest.yaml):
+  modules:
+    - name: auth-service
+      keywords: [auth, login, token, oauth, session, password]
+      entities: [User, Token, Session]
+      apis: [POST /auth/login, POST /auth/refresh]
+      files: 23
+      total_tokens_estimate: 15000  # KB 条目总 token 估算
+      summary_tokens_estimate: 2000  # overview.md 单独 token 估算
+
+上下文预算分配（以 200K 窗口为例）:
+  - 系统指令 + Skill 定义: ~20K
+  - 需求文档: ~5K
+  - KB 相关条目（索引加载）: ~80K  ← 按需加载
+  - 相关源代码（codegraph）: ~50K
+  - 生成产物: ~30K
+  - 缓冲: ~15K
+```
+
+---
+
+## 15. 验证策略：输出正确性聚焦
+
+### 15.1 设计原则
+
+**不要求环境一致性**（不同机器/会话的运行环境可能不同）。验证只关注**输出的正确性**：
+
+| 关注 | 不关注 |
+|------|--------|
+| ✅ 单元测试全部通过 | ❌ 测试通过的机器环境是否一致 |
+| ✅ 集成测试全部通过 | ❌ 集成测试的运行路径是否一致 |
+| ✅ Lint / Type Check 零错误 | ❌ Lint 规则版本是否锁定 |
+| ✅ 构建成功 | ❌ 构建工具的版本是否一致 |
+| ✅ 功能行为符合 spec 定义 | ❌ 实现方式是否与某参考实现一致 |
+
+### 15.2 测试分层
+
+```
+L1: 单元测试 — 函数/方法级别，验证逻辑正确性
+L2: 集成测试 — 模块间交互，验证接口契约
+L3: 端到端测试 (UAT) — 需求验收标准逐条验证
+
+阶段四验证策略:
+  - L1 + L2 必须全部通过 → 阻塞级门禁
+  - L3 由验收标准驱动 → 每条 acceptance criteria 必须覆盖
+  - 不要求测试覆盖率数值（避免 AI 生成低质量测试凑覆盖率）
+  - 但要求"新代码必须有对应测试"（测试存在性而非覆盖率百分比）
+```
+
+---
+
+## 16. Git 驱动的 KB 保鲜定时触发
+
+### 16.1 设计原则
+
+利用 Git 版本历史检测代码变更 → 触发受影响模块的 KB 增量更新。支持定时和手动触发。
+
+### 16.2 触发方式
+
+```yaml
+# KB 保鲜触发配置
+freshness_triggers:
+  # 方式 1: 阶段四自动触发（每次需求完成后）
+  - type: post_verify
+    scope: affected_modules_only  # 只更新被需求影响到的模块 KB
+    
+  # 方式 2: 定时巡检（Cron）
+  - type: cron
+    schedule: "0 2 * * 0"        # 每周日凌晨 2:00
+    scope: full_scan              # 全量扫描所有模块
+    action: report_only           # 只生成漂移报告，不自动修改
+    
+  - type: cron
+    schedule: "0 3 1 * *"        # 每月1日凌晨 3:00
+    scope: full_scan
+    action: auto_fix              # 自动修复置信度高的漂移项
+    
+  # 方式 3: 手动触发
+  - type: manual
+    command: "/devloop kb-fresh --scope <module|all> --mode <report|fix>"
+```
+
+### 16.3 基于 Git 的变更检测
+
+**原理**: 使用 Git commit 祖先链而非时间戳，天然处理同日多次变更。
+
+```bash
+# 检测自上次 KB 更新以来的代码变更
+LAST_KB_UPDATE=$(git log --oneline --grep="\[devloop\] stage:1" -1 --format="%H")
+CHANGED_FILES=$(git diff --name-only $LAST_KB_UPDATE HEAD -- "src/")
+
+# 映射变更文件 → 受影响模块
+for file in $CHANGED_FILES; do
+  module=$(echo $file | cut -d'/' -f2)  # src/<module>/...
+  echo "Module $module affected by $file"
+done
+
+# 触发受影响模块的增量逆向
+# devloop-reverse --scope modules=$affected_modules
+```
+
+**同日多次变更的健壮性**:
+- `git diff <commit> HEAD` 捕获的是两个 commit 之间**所有**变更，与中间经过多少 commit、横跨多少天无关
+- 保鲜自身也会产生 `[devloop] stage:1` commit，后续保鲜自动以最新一次为基线，不会重复检测已修复的内容
+- 每周 report-only 扫描不产生 commit，不影响基线；每月 auto-fix 产生 commit 后自动推进基线
+
+### 16.4 保鲜操作流程
+
+```
+定时触发:
+  1. git diff 检测变更文件
+  2. 映射到受影响模块
+  3. 对每个受影响模块:
+     a. codegraph 获取当前符号信息
+     b. 对比 KB 条目中的 API/数据模型描述
+     c. 标记差异项
+  4. 生成漂移报告 (knowledge-base/.drift-report.yaml)
+  
+  漂移报告结构:
+    module: auth-service
+    drift_score: 0.12
+    changes:
+      - type: api_signature_changed
+        kb_entry: "POST /auth/login → (username, password)"
+        current: "POST /auth/login → (username, password, mfa_token)"
+        auto_fixable: true
+      - type: new_entity
+        entity: "OAuthProvider"
+        kb_entry: null  # KB 中没有记录
+        auto_fixable: true
+      - type: removed_function
+        kb_entry: "validateLegacyToken()"
+        current: null  # 代码中已删除
+        auto_fixable: true
+
+  5. auto_fixable=true 的项 → 自动更新 KB 条目
+  6. auto_fixable=false 的项 → 标记，等待人工审核
+  7. 更新 drift_score 和 last_updated
+  8. Git commit 保鲜更新
+```
+
+---
+
+## 17. 并发锁预留
+
+### 17.1 当前范围
+
+当前仅支持**单个开发者串行执行**。DevLoop 同时在处理的需求数为 1（单线程流水线）。
+
+### 17.2 预留锁机制
+
+当未来需要支持并发需求处理时，设计上预留以下机制：
+
+```yaml
+# .comet/loop-lock.yaml (未来启用)
+lock:
+  strategy: file_based           # 文件锁，最简实现
+  granularity: module_level      # 按模块粒度加锁
+  
+  # 锁规则
+  rules:
+    - resource: "requirements/in-progress/"
+      lock_type: exclusive_write  # 同一时间只有一个需求处于 active 构建
+    - resource: "knowledge-base/modules/<name>/"
+      lock_type: shared_read      # 多个需求可同时读取
+    - resource: "src/<module>/"
+      lock_type: exclusive_write  # 同一模块同一时间只有一个写者
+  
+  # 冲突检测
+  conflict_detection:
+    - before_build: 检查当前需求涉及的模块是否被其他活跃需求锁定
+    - on_conflict: 重新排队（降低优先级 + 记录冲突原因）
+```
+
+**当前实现**: 仅保留 `loop-state.yaml` 中的 `active_requirement` 字段（单需求），不实现锁逻辑。未来需扩展时，将 `active_requirement` 改为 `active_requirements[]` 并启用 `loop-lock.yaml`。
+
+---
+
+## 18. 需求变更策略
+
+### 18.1 两种变更场景
+
+#### 场景 A: 基于已完成需求的修改
+
+前一个需求已经做完了（`status: completed`），需要在原有基础上修改。
+
+**策略**: 创建新需求，`supersedes` 指向原需求。
+
+```yaml
+# 新需求 frontmatter
+id: REQ-015
+title: OAuth2 支持 Microsoft 账号（扩展）
+type: feature
+priority: medium
+status: draft
+supersedes: REQ-010              # ← 被替代的需求
+base_version: REQ-010-v1         # ← 基于哪个版本
+change_type: extension           # extension | modification | replacement
+```
+
+**产物关系**:
+```
+requirements/completed/REQ-010.md       # 原需求（已完成，只读）
+requirements/in-progress/REQ-015.md     # 新需求
+                                        # frontmatter.supersedes = REQ-010
+                                        # 内容引用 REQ-010 的实现作为基础
+```
+
+#### 场景 B: 完全不同的新需求覆盖旧需求
+
+旧需求（可能还在进行中或已完成）被一个完全不同的方案取代。
+
+**策略**: 创建新需求，`replaces` 指向旧需求。旧需求标记为 `superseded`。
+
+```yaml
+# 新需求
+id: REQ-020
+title: 使用 WebAuthn 替代 OAuth2（全新方案）
+type: feature
+priority: high
+status: draft
+replaces: REQ-010                # ← 完全取代
+reason: "安全评审决定采用 WebAuthn 标准替代自建 OAuth2"
+```
+
+**旧需求状态变更**: `status: completed → superseded`，添加 `superseded_by: REQ-020`。
+
+### 18.2 版本追溯
+
+```
+Git 层面:
+  - 每个需求的每次变更 = 一个 commit
+  - commit message 格式: [devloop] stage:2 action:intake req:REQ-015 supersedes:REQ-010
+  - 可通过 git log --grep="req:REQ-010" 追溯完整变更链
+
+需求文档层面:
+  - frontmatter 维护版本链:
+    version_history:
+      - version: v1
+        id: REQ-010
+        date: 2026-06-20
+        status: completed
+      - version: v2
+        id: REQ-015
+        date: 2026-06-27
+        supersedes: REQ-010-v1
+        status: proposed
+```
+
+### 18.3 进行中需求的变更
+
+```
+如果 REQ-010 处于 building 阶段时收到变更:
+  1. 评估已完成 task 的影响范围
+  2. 如果影响 < 2 个 task → 在当前分支直接调整
+  3. 如果影响 >= 2 个 task → 暂停当前需求，创建 REQ-015 (supersedes)
+  4. 原 REQ-010 标记为 blocked，引用新需求
 ```
