@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# kb-drift-check — KB 漂移检测
+# 对比 codegraph 当前符号 → KB 条目 → 生成 knowledge-base/.drift-report.yaml
+# 依赖: bash 4.x, codegraph CLI, grep, sed, awk
+# 用法: kb-drift-check [--scope <module-name|all>] [--verbose]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+KB_DIR="$PROJECT_ROOT/knowledge-base"
+MANIFEST="$KB_DIR/.manifest.yaml"
+DRIFT_REPORT="$KB_DIR/.drift-report.yaml"
+CODEGRAPH_BIN="$(which codegraph 2>/dev/null || echo '')"
+HAS_CODEGRAPH=false
+[[ -n "$CODEGRAPH_BIN" && -d "$PROJECT_ROOT/.codegraph" ]] && HAS_CODEGRAPH=true
+
+# ─── 参数解析 ──────────────────────────────────────────────
+SCOPE="all"
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --scope) SCOPE="$2"; shift 2 ;;
+    --verbose|-v) VERBOSE=true; shift ;;
+    *) shift ;;
+  esac
+done
+
+# ─── 颜色 ──────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+
+now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+# ─── 内部: 从 KB 文件中提取文档化符号 ──────────────────────
+# 从 KB 模块条目中提取记录的符号名称
+extract_kb_symbols() {
+  local mod_dir="$1"
+  local symbols=""
+
+  for kb_file in "$mod_dir"/overview.md "$mod_dir"/api.md "$mod_dir"/business-logic.md "$mod_dir"/data-model.md; do
+    [[ ! -f "$kb_file" ]] && continue
+
+    # 提取 frontmatter 中的 entities 和 apis 字段
+    local entities apis
+    entities=$(awk '/^entities:/,/^[a-z]/ {if (/^  - /) print $2}' "$kb_file" 2>/dev/null || true)
+    apis=$(awk '/^apis:/,/^[a-z]/ {if (/^  - /) print $2}' "$kb_file" 2>/dev/null || true)
+    symbols="${symbols}${entities}"$'\n'"${apis}"$'\n'
+
+    # 提取文档体中标记的函数/方法名（反引号包裹的或 code blocks 中的明显符号）
+    # 模式: `functionName` 或 `ClassName.methodName`
+    local inline_symbols
+    inline_symbols=$(grep -oP '`[a-zA-Z_][a-zA-Z0-9_.]*`' "$kb_file" 2>/dev/null \
+      | sed 's/`//g' \
+      | grep -vE '^(http|https|GET|POST|PUT|DELETE|PATCH|npm|yarn|git|bash|curl|yq|jq|grep|sed|awk)$' \
+      | sort -u || true)
+    symbols="${symbols}${inline_symbols}"$'\n'
+  done
+
+  echo "$symbols" | sort -u | sed '/^$/d'
+}
+
+# ─── 内部: 从 codegraph 查询当前符号 ───────────────────────
+query_codegraph_symbols() {
+  local search_term="$1"
+  [[ "$HAS_CODEGRAPH" != "true" ]] && { echo ""; return 0; }
+
+  # 使用 codegraph query 搜索符号
+  "$CODEGRAPH_BIN" query "$search_term" --limit 5 2>/dev/null \
+    | grep -oP '^[\s]*[a-zA-Z_][a-zA-Z0-9_.]*' \
+    | head -5 \
+    | sed 's/^[[:space:]]*//' \
+    | grep -vE "^(Search|${search_term}$|file|import|call)" \
+    || true
+}
+
+# ─── 内部: 计算单个符号的漂移状态 ──────────────────────────
+# 返回: 0=存在 1=缺失 2=已变更
+check_symbol_drift() {
+  local symbol="$1" kb_path_hint="$2"
+
+  # 在 codegraph 中搜索该符号
+  if [[ "$HAS_CODEGRAPH" != "true" ]]; then
+    echo "unknown"
+    return 0
+  fi
+
+  local result
+  result=$("$CODEGRAPH_BIN" query "$symbol" --limit 3 2>/dev/null || true)
+
+  if [[ -z "$result" ]] || echo "$result" | grep -q "No results"; then
+    echo "missing"
+  elif echo "$result" | grep -qi "$symbol"; then
+    echo "present"
+  else
+    echo "changed"
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 主逻辑
+# ═══════════════════════════════════════════════════════════════
+
+main() {
+  local start_ts
+  start_ts=$(now_iso)
+
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║  KB Drift Check — 知识库漂移检测"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  CodeGraph: $($HAS_CODEGRAPH && echo "${GREEN}available${NC}" || echo "${YELLOW}unavailable (source code only)${NC}")"
+  echo "  Scope:     ${SCOPE}"
+  echo "  Time:      ${start_ts}"
+  echo ""
+
+  # ── 获取模块列表 ──
+  local module_dirs=()
+  if [[ -f "$MANIFEST" ]]; then
+    # 从 manifest 读取模块名
+    while IFS= read -r line; do
+      local name
+      name=$(echo "$line" | grep -oP 'name:\s*\K.+' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
+      [[ -n "$name" && "$name" != "{{ module_name }}" ]] && module_dirs+=("$name")
+    done < <(grep -A1 'name:' "$MANIFEST" 2>/dev/null)
+  fi
+
+  # 如果 manifest 没有模块，回退到目录扫描
+  if [[ ${#module_dirs[@]} -eq 0 ]] && [[ -d "$KB_DIR/modules" ]]; then
+    for d in "$KB_DIR/modules"/*/; do
+      [[ -d "$d" ]] && module_dirs+=("$(basename "$d")")
+    done
+  fi
+
+  if [[ ${#module_dirs[@]} -eq 0 ]]; then
+    echo "  ${YELLOW}⚠ No KB modules found — skipping drift check${NC}"
+    # 生成空报告
+    cat > "$DRIFT_REPORT" <<YAML
+# KB Drift Report
+# Generated: ${start_ts}
+# Note: No KB modules exist yet. Run devloop-reverse (Phase 1) first.
+
+generated_at: "${start_ts}"
+generated_by: kb-drift-check
+total_modules: 0
+total_entries: 0
+entries_drifted: 0
+drift_summary:
+  high_drift: 0
+  medium_drift: 0
+  low_drift: 0
+  none: 0
+blocking_drifts: []
+entries: []
+soft_gate_warnings: []
+YAML
+    echo ""
+    echo "✅ Drift report generated (empty — no modules)"
+    return 0
+  fi
+
+  # ── 遍历每个模块 ──
+  local total_entries=0 drifted_entries=0
+  local high=0 medium=0 low=0 none=0
+  local entries_yaml=""
+  local blocking_list=""
+  local now_ts
+  now_ts=$(now_iso)
+
+  for mod_name in "${module_dirs[@]}"; do
+    [[ "$SCOPE" != "all" && "$mod_name" != "$SCOPE" ]] && continue
+
+    local mod_dir="$KB_DIR/modules/$mod_name"
+    [[ ! -d "$mod_dir" ]] && continue
+
+    $VERBOSE && echo "  📦 Module: ${mod_name}"
+
+    # 提取该模块的 KB 文档化符号
+    local kb_symbols
+    kb_symbols=$(extract_kb_symbols "$mod_dir")
+    local symbol_count
+    symbol_count=$(echo "$kb_symbols" | grep -c '[^[:space:]]' 2>/dev/null || echo "0")
+
+    $VERBOSE && echo "     KB symbols found: ${symbol_count}"
+
+    # 读取 frontmatter 中的现有 drift_score 和 confidence
+    local existing_confidence existing_drift
+    existing_confidence=$(awk '/^confidence:/ {gsub(/^confidence:[[:space:]]*/, ""); print; exit}' "$mod_dir/overview.md" 2>/dev/null || echo "N/A")
+    existing_drift=$(awk '/^drift_score:/ {gsub(/^drift_score:[[:space:]]*/, ""); print; exit}' "$mod_dir/overview.md" 2>/dev/null || echo "N/A")
+
+    # 对每个符号运行漂移检查
+    local matched=0 missing=0 changed=0 total_sym=0
+    local symbol_results=""
+
+    while IFS= read -r sym; do
+      [[ -z "$sym" ]] && continue
+      total_sym=$((total_sym + 1))
+      total_entries=$((total_entries + 1))
+
+      local status
+      status=$(check_symbol_drift "$sym" "$mod_dir")
+
+      case "$status" in
+        present) matched=$((matched + 1)) ;;
+        missing) missing=$((missing + 1)) ;;
+        changed) changed=$((changed + 1)) ;;
+        *)       ;; # unknown — 不算漂移
+      esac
+
+      symbol_results="${symbol_results}      - symbol: \"${sym}\""$'\n'"        status: \"${status}\""$'\n'
+    done <<< "$kb_symbols"
+
+    # 计算模块漂移分数
+    local drift_percent=0
+    if [[ $total_sym -gt 0 ]]; then
+      drift_percent=$(( (missing + changed) * 100 / total_sym ))
+    fi
+
+    local drift_level="none"
+    if [[ $drift_percent -ge 50 ]]; then
+      drift_level="high"
+      high=$((high + 1))
+    elif [[ $drift_percent -ge 20 ]]; then
+      drift_level="medium"
+      medium=$((medium + 1))
+    elif [[ $drift_percent -gt 0 ]]; then
+      drift_level="low"
+      low=$((low + 1))
+    else
+      none=$((none + 1))
+    fi
+
+    if [[ $drift_percent -gt 0 ]]; then
+      drifted_entries=$((drifted_entries + 1))
+    fi
+
+    # 阻断级漂移 (>50%)
+    if [[ "$drift_level" == "high" ]]; then
+      blocking_list="${blocking_list}  - module: \"${mod_name}\""$'\n'"    drift_percent: ${drift_percent}"$'\n'"    action: \"KB entry severely outdated — consider re-running devloop-reverse\""$'\n'
+    fi
+
+    # 生成条目 YAML
+    entries_yaml="${entries_yaml}  - module: \"${mod_name}\""$'\n'"    kb_file: \"modules/${mod_name}/overview.md\""$'\n'"    symbols_total: ${total_sym}"$'\n'"    symbols_matched: ${matched}"$'\n'"    symbols_missing: ${missing}"$'\n'"    symbols_changed: ${changed}"$'\n'"    drift_percent: ${drift_percent}"$'\n'"    drift_level: \"${drift_level}\""$'\n'"    previous_confidence: \"${existing_confidence}\""$'\n'"    previous_drift_score: \"${existing_drift}\""$'\n'"    checked_at: \"${now_ts}\""$'\n'
+
+    $VERBOSE && echo "     Drift: ${drift_percent}% (${drift_level}) — matched:${matched} missing:${missing} changed:${changed}"
+  done
+
+  # ── 生成报告 ──
+  cat > "$DRIFT_REPORT" <<YAML
+# KB Drift Report
+# Generated by kb-drift-check at ${start_ts}
+# Compares documented KB symbols against current codegraph index.
+# drift_level: none (0%) / low (1-19%) / medium (20-49%) / high (50-100%)
+# High drift entries are BLOCKING — they must be repaired before the next build phase.
+
+generated_at: "${start_ts}"
+generated_by: kb-drift-check
+codegraph_available: ${HAS_CODEGRAPH}
+scope: "${SCOPE}"
+total_modules: ${#module_dirs[@]}
+total_entries: ${total_entries}
+entries_drifted: ${drifted_entries}
+drift_summary:
+  high_drift: ${high}
+  medium_drift: ${medium}
+  low_drift: ${low}
+  none: ${none}
+blocking_drifts:
+${blocking_list:-  []}
+soft_gate_warnings: []
+entries:
+${entries_yaml}
+YAML
+
+  echo ""
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Drift Summary:"
+  echo "    ${RED}High:   ${high}${NC}"
+  echo "    ${YELLOW}Medium: ${medium}${NC}"
+  echo "    ${CYAN}Low:    ${low}${NC}"
+  echo "    ${GREEN}None:   ${none}${NC}"
+  echo "    Total entries checked: ${total_entries}"
+  echo ""
+
+  if [[ $high -gt 0 ]]; then
+    echo -e "  ${RED}⚠ BLOCKING DRIFTS DETECTED (${high} modules >50% drift)${NC}"
+    echo "  → Consider re-running devloop-reverse for affected modules"
+    echo ""
+  fi
+
+  echo "✅ Drift report written: ${DRIFT_REPORT}"
+}
+
+main "$@"

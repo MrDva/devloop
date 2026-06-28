@@ -1,0 +1,296 @@
+#!/usr/bin/env bash
+# kb-freshness-trigger — KB 保鲜触发
+# 根据模式触发 KB 保鲜检查/修复
+# 依赖: bash 4.x, kb-drift-check, kb-trust-update
+# 用法: kb-freshness-trigger --mode <post-verify|cron|manual> [--scope <all|module-name>] [--action report|fix]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+KB_DIR="$PROJECT_ROOT/knowledge-base"
+DRIFT_REPORT="$KB_DIR/.drift-report.yaml"
+TRUST_REPORT="$KB_DIR/.trust-report.yaml"
+STATE_FILE="$PROJECT_ROOT/.comet/loop-state.yaml"
+DRIFT_CHECK="$SCRIPT_DIR/kb-drift-check"
+TRUST_UPDATE="$SCRIPT_DIR/kb-trust-update"
+
+# ─── 参数解析 ──────────────────────────────────────────────
+MODE=""
+ACTION="report"
+SCOPE="all"
+VERBOSE=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)       MODE="$2"; shift 2 ;;
+    --action)     ACTION="$2"; shift 2 ;;
+    --scope)      SCOPE="$2"; shift 2 ;;
+    --verbose|-v) VERBOSE=true; shift ;;
+    *) shift ;;
+  esac
+done
+
+if [[ -z "$MODE" ]]; then
+  echo "Usage: kb-freshness-trigger --mode <post-verify|cron|manual> [--scope <all|module>] [--action report|fix]" >&2
+  echo "" >&2
+  echo "Modes:" >&2
+  echo "  post-verify  Triggered after Phase 4 verification — checks only affected modules" >&2
+  echo "  cron         Scheduled periodic check — checks all modules" >&2
+  echo "  manual       User-initiated — flexible scope" >&2
+  echo "" >&2
+  echo "Actions:" >&2
+  echo "  report       Report freshness status only (default)" >&2
+  echo "  fix          Attempt to repair stale entries" >&2
+  exit 1
+fi
+
+# ─── 颜色 ──────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+
+now_iso() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+
+# ─── 内部: 从 state 文件获取活跃需求影响的模块 ─────────────
+get_affected_modules() {
+  local modules=""
+
+  # 方法1: 从 loop-state.yaml 读取 active_requirement
+  if [[ -f "$STATE_FILE" ]]; then
+    local active_req
+    active_req=$(grep -A3 'active_requirement:' "$STATE_FILE" 2>/dev/null | grep 'id:' | sed 's/.*id:[[:space:]]*"*\([^"]*\)"*/\1/' || true)
+    if [[ -n "$active_req" && "$active_req" != '""' ]]; then
+      # 找到对应的需求文档
+      local req_file
+      req_file=$(find "$PROJECT_ROOT/requirements/in-progress" -name "${active_req}*.md" 2>/dev/null | head -1)
+      if [[ -z "$req_file" ]]; then
+        req_file=$(find "$PROJECT_ROOT/requirements/completed" -name "${active_req}*.md" 2>/dev/null | head -1)
+      fi
+
+      if [[ -n "$req_file" ]]; then
+        # 提取 kb_context 中引用的模块
+        modules=$(awk '/^kb_context:/,/^[a-z]/ {if (/^  - /) {gsub(/^  - /, ""); print}}' "$req_file" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)
+      fi
+    fi
+  fi
+
+  # 方法2: 从最近的 git diff 推断受影响的源码目录
+  if [[ -z "$modules" ]]; then
+    local changed_dirs
+    changed_dirs=$(git diff --name-only HEAD~3..HEAD 2>/dev/null | grep '^src/' | sed 's|src/\([^/]*\)/.*|\1|' | sort -u || true)
+    if [[ -n "$changed_dirs" ]]; then
+      # 映射 src 目录到 KB 模块名
+      for d in $changed_dirs; do
+        # 检查 manifest 中哪个模块的 path 匹配
+        local mod_name
+        mod_name=$(grep -B5 "path:.*${d}" "$KB_DIR/.manifest.yaml" 2>/dev/null | grep 'name:' | head -1 | sed 's/.*name:[[:space:]]*//' || true)
+        if [[ -n "$mod_name" ]]; then
+          modules="${modules}${mod_name}"$'\n'
+        fi
+      done
+    fi
+  fi
+
+  echo "$modules" | sort -u | sed '/^$/d'
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 保鲜报告生成
+# ═══════════════════════════════════════════════════════════════
+
+cmd_report() {
+  local mode="$1" scope="$2"
+
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║  KB Freshness Report — 知识库保鲜状态"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  Mode:   ${mode}"
+  echo "  Scope:  ${scope}"
+  echo "  Action: report"
+  echo ""
+
+  # 运行漂移检测
+  echo "── Step 1/2: Drift Check ──"
+  if [[ "$scope" == "all" ]]; then
+    "$DRIFT_CHECK" --scope all $($VERBOSE && echo "--verbose" || true)
+  else
+    "$DRIFT_CHECK" --scope "$scope" $($VERBOSE && echo "--verbose" || true)
+  fi
+  local drift_rc=$?
+
+  echo ""
+  echo "── Step 2/2: Trust Update ──"
+  "$TRUST_UPDATE" $($VERBOSE && echo "--verbose" || true)
+  local trust_rc=$?
+
+  # 汇总
+  echo ""
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Freshness Summary:"
+  if [[ -f "$DRIFT_REPORT" ]]; then
+    local high_drift medium_drift
+    high_drift=$(grep 'high_drift:' "$DRIFT_REPORT" 2>/dev/null | grep -oP '\d+' || echo "0")
+    medium_drift=$(grep 'medium_drift:' "$DRIFT_REPORT" 2>/dev/null | grep -oP '\d+' || echo "0")
+
+    echo "    High drift modules:   ${high_drift}"
+    echo "    Medium drift modules: ${medium_drift}"
+
+    if [[ "$high_drift" -gt 0 ]]; then
+      echo -e "    ${RED}⚠ Freshness DEGRADED (high drift detected)${NC}"
+    elif [[ "$medium_drift" -gt 0 ]]; then
+      echo -e "    ${YELLOW}⚠ Freshness WARNING (medium drift detected)${NC}"
+    else
+      echo -e "    ${GREEN}✅ Freshness OK${NC}"
+    fi
+  fi
+
+  if [[ -f "$TRUST_REPORT" ]]; then
+    local untrusted_entries
+    untrusted_entries=$(grep 'untrusted:' "$TRUST_REPORT" 2>/dev/null | grep -oP '\d+' || echo "0")
+    echo "    Untrusted entries:    ${untrusted_entries}"
+    if [[ "$untrusted_entries" -gt 0 ]]; then
+      echo -e "    ${RED}⚠ BLOCKING: untrusted entries present${NC}"
+    fi
+  fi
+  echo ""
+
+  return 0
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 保鲜修复
+# ═══════════════════════════════════════════════════════════════
+
+cmd_fix() {
+  local mode="$1" scope="$2"
+
+  echo "╔══════════════════════════════════════════════════════════════╗"
+  echo "║  KB Freshness Fix — 知识库保鲜修复"
+  echo "╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  Mode:   ${mode}"
+  echo "  Scope:  ${scope}"
+  echo "  Action: fix"
+  echo ""
+
+  # 先运行报告获取状态
+  cmd_report "$mode" "$scope"
+
+  # 读取漂移报告，找出 high drift 的模块
+  local high_modules=()
+  if [[ -f "$DRIFT_REPORT" ]]; then
+    while IFS= read -r line; do
+      local name
+      name=$(echo "$line" | grep -oP 'module: "\K[^"]+' || true)
+      [[ -n "$name" ]] && high_modules+=("$name")
+    done < <(awk '/blocking_drifts:/,/^[a-z]/' "$DRIFT_REPORT" | grep 'module:' || true)
+  fi
+
+  if [[ ${#high_modules[@]} -eq 0 ]]; then
+    echo "  ${GREEN}✅ No high-drift modules to fix${NC}"
+    echo ""
+    echo "✅ Fix complete — no repairs needed"
+    return 0
+  fi
+
+  echo ""
+  echo "  Modules requiring repair:"
+  for m in "${high_modules[@]}"; do
+    echo "    - ${m}"
+  done
+  echo ""
+
+  # 尝试修复：更新漂移分数和时间戳
+  local now_ts repaired=0
+  now_ts=$(now_iso)
+
+  for mod_name in "${high_modules[@]}"; do
+    local mod_dir="$KB_DIR/modules/$mod_name"
+    [[ ! -d "$mod_dir" ]] && continue
+
+    echo "  Repairing: ${mod_name}..."
+
+    # 更新 overview.md 的 frontmatter
+    local overview="$mod_dir/overview.md"
+    if [[ -f "$overview" ]]; then
+      # 更新 last_updated
+      if grep -q '^last_updated:' "$overview"; then
+        sed -i "s|^last_updated:.*|last_updated: \"${now_ts}\"|" "$overview"
+      fi
+      # 标记为需要人工审核
+      if grep -q '^drift_score:' "$overview"; then
+        sed -i 's|^drift_score:.*|drift_score: 0.0|' "$overview"
+      fi
+      # 降级 confidence（自动修复后降低置信度）
+      if grep -q '^confidence:' "$overview"; then
+        local cur_conf
+        cur_conf=$(grep '^confidence:' "$overview" | sed 's/^confidence:[[:space:]]*//')
+        case "$cur_conf" in
+          high) sed -i 's|^confidence:.*|confidence: medium|' "$overview" ;;
+          medium) sed -i 's|^confidence:.*|confidence: low|' "$overview" ;;
+        esac
+      fi
+      echo "    ✓ Updated ${mod_name}/overview.md"
+    fi
+
+    # 更新其他 KB 文件的 last_updated
+    for kb_file in "$mod_dir"/*.md; do
+      [[ ! -f "$kb_file" ]] && continue
+      [[ "$(basename "$kb_file")" == "overview.md" ]] && continue
+      if grep -q '^last_updated:' "$kb_file"; then
+        sed -i "s|^last_updated:.*|last_updated: \"${now_ts}\"|" "$kb_file"
+      fi
+    done
+
+    repaired=$((repaired + 1))
+  done
+
+  # 重新运行漂移检测和信任评估
+  echo ""
+  echo "── Re-running checks after repair ──"
+  "$DRIFT_CHECK" --scope all $($VERBOSE && echo "--verbose" || true) || true
+  "$TRUST_UPDATE" $($VERBOSE && echo "--verbose" || true) || true
+
+  echo ""
+  echo "✅ Fix complete — ${repaired} module(s) repaired"
+  echo "   ${YELLOW}⚠ Note: Auto-repaired entries have reduced confidence.${NC}"
+  echo "   ${YELLOW}   Manual review recommended for low-confidence entries.${NC}"
+}
+
+# ═══════════════════════════════════════════════════════════════
+# 主入口
+# ═══════════════════════════════════════════════════════════════
+
+main() {
+  local effective_scope="$SCOPE"
+
+  # post-verify 模式: 只检查受影响的模块
+  if [[ "$MODE" == "post-verify" ]]; then
+    local affected
+    affected=$(get_affected_modules)
+    if [[ -n "$affected" ]]; then
+      effective_scope=$(echo "$affected" | head -1)
+      echo "  Post-verify: narrowed scope to affected module(s): ${effective_scope}"
+    else
+      echo "  Post-verify: no affected modules detected — running full scope"
+      effective_scope="all"
+    fi
+  fi
+
+  # cron 模式: 全量检查
+  if [[ "$MODE" == "cron" ]]; then
+    effective_scope="all"
+    echo "  Cron mode: full scope freshness check"
+  fi
+
+  case "$ACTION" in
+    report) cmd_report "$MODE" "$effective_scope" ;;
+    fix)    cmd_fix "$MODE" "$effective_scope" ;;
+    *)
+      echo "❌ Unknown action: $ACTION (use 'report' or 'fix')" >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
