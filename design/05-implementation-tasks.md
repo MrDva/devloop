@@ -14,7 +14,7 @@
 
 | 已有 Skill | 被哪个 DevLoop Skill 调用 | 调用阶段 |
 |-----------|--------------------------|---------|
-| `dispatching-parallel-agents` | devloop-reverse | 阶段一：并行分析多个模块 |
+| `dispatching-parallel-agents` | devloop-reverse | 阶段一：并行分析多个业务功能 |
 | `brainstorming` | devloop-reverse, devloop-intake, devloop-build | 阶段一（反推需求）、阶段二（影响分析）、阶段三（方案设计） |
 | `openspec-propose` | devloop-intake | 阶段二：创建 OpenSpec Change |
 | `writing-plans` | devloop-build | 阶段三：创建实现计划 |
@@ -239,24 +239,30 @@ test -s .claude/skills/devloop-resume/SKILL.md \
 
 ---
 
-### T1.1 — 创建 devloop-reverse Skill
+### T1.1 — 创建 devloop-reverse Skill (v2)
 
-**目标**: 阶段一编排 Skill。串联代码扫描→并行模块分析→KB汇总→需求反推→门禁→提交。
+**目标**: 阶段一编排 Skill。串联项目感知→多信号聚类→并行业务功能分析→KB汇总→需求反推→门禁→提交。
 
 **复用**:
 | 调用 | 用途 |
 |------|------|
-| `codegraph_explore` (MCP) | 扫描项目结构，生成模块清单 |
-| `codegraph_node` (MCP) | 读取单模块的符号、API、依赖 |
-| `dispatching-parallel-agents` | 并行分析多个模块（每个模块一个 agent） |
+| `codegraph_explore` (MCP) | 1.2.1 项目感知 + 1.2.2 多信号聚类各阶段 |
+| `codegraph_callers` (MCP) | Phase 3 调用图扩展，Phase 2 实体锚点 |
+| `codegraph_node` (MCP) | 读取单业务功能的符号、API、依赖 |
+| `dispatching-parallel-agents` | 并行分析多个业务功能（每个功能一个 agent） |
 | `brainstorming` | 从汇总 KB 反推基线需求 |
 | `comet-state` (T0.2) | 每步保存 checkpoint |
-| `devloop-guard` (T0.3) | 运行门禁 G1.1-G1.5 |
+| `devloop-guard` (T0.3) | 运行门禁 G1.0-G1.5 |
 
-**新建逻辑**（薄编排层）:
-- 细粒度模块拆分策略（单模块 < 50K tokens）
-- KB 条目 frontmatter 防御标记注入（`source: auto-generated`, `confidence`, `drift_score`）
-- KB 汇总整合（各模块条目 → architecture/apis/data-models 全局文档）
+**新建逻辑**（薄编排层，~200 行）:
+- **1.2.1 项目感知**: 检测项目类型（web-api/cli/frontend/library/generic），选择种子策略和分类体系
+- **1.2.2 多信号聚类**: Phase 1-7 算法编排（种子收集→实体锚点→调用图→导入邻近→命名→投票合并→分类）
+  - 聚类算法不是独立脚本——它是 LLM 驱动的 `codegraph_explore`/`codegraph_callers` 调用序列
+  - 加权投票阈值可在 `guard-config.yaml` 配置
+- 业务功能拆分策略（单功能 < 50K tokens）
+- KB 条目 frontmatter 防御标记注入（`source: auto-generated`, `confidence`, `drift_score`, `clustering_signals`）
+- KB 汇总整合（各业务功能条目 → architecture/apis/data-models 全局文档 + 依赖图）
+- v1→v2 迁移编排（检测旧 manifest → 归档 → 聚类 → 更新需求引用 → 生成迁移报告）
 - Git commit: `[devloop] stage:1 action:reverse`
 
 **产出**: `.claude/skills/devloop-reverse/SKILL.md`
@@ -266,33 +272,37 @@ test -s .claude/skills/devloop-resume/SKILL.md \
 test -s .claude/skills/devloop-reverse/SKILL.md \
   && grep -q 'codegraph_explore\|dispatching-parallel-agents\|brainstorming' \
      .claude/skills/devloop-reverse/SKILL.md \
+  && grep -q 'project_profile\|business_functions\|clustering' \
+     .claude/skills/devloop-reverse/SKILL.md \
   && echo "✅ T1.1 PASSED" || echo "❌ T1.1 FAILED"
 ```
 
 ---
 
-### T1.2 — 运行阶段一（首次逆向分析）
+### T1.2 — 运行阶段一（首次逆向分析 v2）
 
-**目标**: 在当前项目上执行 `devloop-reverse`，产出完整 KB + 基线需求。
+**目标**: 在当前项目上执行 `devloop-reverse`，产出完整 KB（v2 格式）+ 基线需求。
 
 **实现**:
 1. 加载 `devloop-reverse` Skill
-2. 对当前项目执行全量逆向分析
-3. 每个模块产出 5 个 KB 文件（overview/api/data-model/business-logic/dependencies）
-4. 汇总产出 architecture/apis/data-models 全局文档
+2. 对当前项目执行全量逆向分析（1.2.1 项目感知 → 1.2.2 聚类 → 1.2.3 功能分析）
+3. 每个业务功能产出 5 个 KB 文件到 `knowledge-base/business-functions/<bf-name>/`
+4. 汇总产出 architecture/apis/data-models 全局文档 + 业务功能依赖图
 5. 反推基线需求到 `requirements/baseline/`
-6. 每个产物 frontmatter 包含防御标记
+6. 每个产物 frontmatter 包含防御标记 + business_function 引用
 
 **验证**:
 ```bash
-MODULES=$(ls knowledge-base/modules/ 2>/dev/null | wc -l)
+BFS=$(ls knowledge-base/business-functions/ 2>/dev/null | wc -l)
 REQS=$(ls requirements/baseline/REQ-*.md 2>/dev/null | wc -l)
-echo "模块数: $MODULES, 基线需求数: $REQS"
-test "$MODULES" -gt 0 && test "$REQS" -gt 0 \
+echo "业务功能数: $BFS, 基线需求数: $REQS"
+test "$BFS" -gt 0 && test "$REQS" -gt 0 \
   && echo "✅ T1.2 PASSED" || echo "❌ T1.2 FAILED"
-# 检查防御标记
-head -10 knowledge-base/modules/*/overview.md | grep -q 'source: auto-generated' \
-  && echo "  防御标记已注入"
+# 检查 v2 格式
+grep -q 'business_functions:' knowledge-base/.manifest.yaml \
+  && echo "  ✓ v2 manifest 格式"
+grep -q 'project_profile:' knowledge-base/.manifest.yaml \
+  && echo "  ✓ project_profile 存在"
 ```
 
 ---

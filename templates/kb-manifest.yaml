@@ -1,20 +1,160 @@
-# KB 模块清单
-# 由阶段一（逆向分析）自动生成，阶段二/三查询使用
+# KB 业务功能清单 — v2
+# 由阶段一（逆向分析）自动生成：1.2.1 项目感知 + 1.2.2 多信号聚类
 # 每次逆向分析后增量更新
 
-modules: {{ modules }}
-  # - name: {{ module_name }}
-  #   path: {{ module_path }}
-  #   type: {{ module_type }}
-  #   keywords: {{ keywords }}
-  #   entities: {{ entities }}
-  #   apis: {{ apis }}
-  #   files: {{ file_count }}
-  #   total_tokens_estimate: {{ total_tokens }}
-  #   summary_tokens_estimate: {{ summary_tokens }}
-  #   last_analyzed: {{ last_analyzed }}
-  #   confidence: {{ confidence }}
+schema_version: "2.0"
 
-generated_at: {{ generated_at }}
-generated_by: {{ generated_by }}
-total_modules: {{ total_modules }}
+# ── 项目感知（由 1.2.1 产出）─────────────────────────
+project_profile:
+  type: {{ project_type }}               # web-api | cli | frontend | library | data-pipeline | generic
+  language: {{ language }}
+  runtime: {{ runtime }}
+  framework: {{ framework }}
+  database: {{ database }}
+  seed_strategy: {{ seed_strategy }}     # api-route | cli-command | page-route | public-export | data-flow | directory-fallback
+  classification: {{ classification }}   # 分类体系标识
+  detection_signals:                     # 检测依据
+    {{#each detection_signals}}
+    - dimension: {{ this.dimension }}
+      signal: {{ this.signal }}
+    {{/each}}
+
+# ── 业务功能（由 1.2.2 多信号聚类产出）───────────────
+business_functions:
+{{#each business_functions}}
+  - name: "{{ this.name }}"              # 语义化业务功能名（小写 kebab-case）
+    description: "{{ this.description }}"
+    category: {{ this.category }}        # 由 1.2.1 选择的分类体系决定可选值
+    confidence: {{ this.confidence }}    # 0.0 - 1.0
+
+    # ── 入口种子 ──
+    seeds:
+    {{#each this.seeds}}
+      - type: {{ this.type }}
+        source: "{{ this.source }}"
+        handler: "{{ this.handler }}"
+    {{/each}}
+
+    # ── 关联的入口端点（类型相关）──
+    {{#if this.api_endpoints}}
+    api_endpoints:
+    {{#each this.api_endpoints}}
+      - method: {{ this.method }}
+        path: {{ this.path }}
+        handler: "{{ this.handler }}"
+    {{/each}}
+    {{/if}}
+    {{#if this.commands}}
+    commands:
+    {{#each this.commands}}
+      - name: {{ this.name }}
+        handler: "{{ this.handler }}"
+    {{/each}}
+    {{/if}}
+    {{#if this.page_routes}}
+    page_routes:
+    {{#each this.page_routes}}
+      - path: {{ this.path }}
+        component: "{{ this.component }}"
+    {{/each}}
+    {{/if}}
+
+    # ── 核心符号 ──
+    core_symbols:
+      functions:
+      {{#each this.core_symbols.functions}}
+        - {{ this }}
+      {{/each}}
+      types:
+      {{#each this.core_symbols.types}}
+        - {{ this }}
+      {{/each}}
+
+    # ── 文件归属 ──
+    primary_files:                        # 专属于此业务功能的文件
+    {{#each this.primary_files}}
+      - {{ this }}
+    {{/each}}
+    shared_files:                         # 与其他业务功能共享的文件
+    {{#each this.shared_files}}
+      - file: {{ this.file }}
+        role: "{{ this.role }}"
+        also_in: [{{#each this.also_in}}{{ this }}{{#unless @last}}, {{/unless}}{{/each}}]
+    {{/each}}
+
+    # ── 数据实体 ──
+    data_entities:
+    {{#each this.data_entities}}
+      - {{ this }}
+    {{/each}}
+
+    # ── 功能依赖 ──
+    depends_on:
+    {{#each this.depends_on}}
+      - business_function: {{ this.business_function }}
+        reason: "{{ this.reason }}"
+    {{/each}}
+
+    # ── 关联的需求 ──
+    derived_requirements:
+    {{#each this.derived_requirements}}
+      - {{ this }}
+    {{/each}}
+
+    # ── 聚类证据追溯 ──
+    clustering_signals:
+      seed: {{ this.clustering_signals.seed }}
+      call_graph: {{ this.clustering_signals.call_graph }}
+      import_proximity: {{ this.clustering_signals.import_proximity }}
+      naming: {{ this.clustering_signals.naming }}
+
+    # ── 规模指标 ──
+    size:
+      primary_files: {{ this.size.primary_files }}
+      shared_files: {{ this.size.shared_files }}
+      total_files: {{ this.size.total_files }}
+      kb_tokens_estimate: {{ this.size.kb_tokens_estimate }}
+{{/each}}
+
+# ── 共享基础（被所有业务功能共享的类型/配置）─────────
+shared_foundations:
+{{#each shared_foundations}}
+  - name: "{{ this.name }}"
+    description: "{{ this.description }}"
+    category: foundation
+    confidence: {{ this.confidence }}
+    core_symbols:
+      types:
+      {{#each this.core_symbols.types}}
+        - {{ this }}
+      {{/each}}
+      constants:
+      {{#each this.core_symbols.constants}}
+        - {{ this }}
+      {{/each}}
+    primary_files:
+    {{#each this.primary_files}}
+      - {{ this }}
+    {{/each}}
+    used_by:
+    {{#each this.used_by}}
+      - {{ this }}
+    {{/each}}
+    size:
+      primary_files: {{ this.size.primary_files }}
+      shared_files: {{ this.size.shared_files }}
+      kb_tokens_estimate: {{ this.size.kb_tokens_estimate }}
+{{/each}}
+
+# ── 元信息 ──
+generated_at: "{{ generated_at }}"
+generated_by: "devloop-reverse (v2 clustering)"
+total_business_functions: {{ total_business_functions }}
+total_files_analyzed: {{ total_files_analyzed }}
+clustering_quality_score: {{ clustering_quality_score }}
+
+# ── 向后兼容 ──
+migration_from:
+  schema_version: "1.0"
+  previous_manifest: "knowledge-base/.manifest.yaml"
+  migration_date: "{{ migration_date }}"

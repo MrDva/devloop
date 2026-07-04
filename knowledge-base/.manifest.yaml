@@ -1,0 +1,431 @@
+# DevLoop 知识库业务功能清单 — v2
+# 由阶段一（逆向分析）自动生成：1.2.1 项目感知 + 1.2.2 多信号聚类
+# 迁移自 v1（目录式模块划分），迁移日期: 2026-07-04
+schema_version: "2.0"
+
+# ── 项目感知（由 1.2.1 产出）─────────────────────────
+project_profile:
+  type: web-api
+  language: typescript
+  runtime: node
+  framework: express
+  database: sqlite (better-sqlite3)
+  seed_strategy: api-route
+  classification: web-api
+  detection_signals:
+    - dimension: package_manager
+      signal: "package.json with express dependency"
+    - dimension: entry_point
+      signal: "app.listen() found in src/app.ts"
+    - dimension: directory_structure
+      signal: "src/routes/ pattern (auth/routes.ts, logging/routes.ts)"
+
+# ── 业务功能（由 1.2.2 多信号聚类产出）───────────────
+business_functions:
+  - name: "user-authentication"
+    description: "用户名/密码登录，JWT 签发，用户认证中间件"
+    category: core
+    confidence: 0.92
+    seeds:
+      - type: route
+        source: "src/auth/routes.ts:router.post('/login')"
+        handler: "auth/routes.ts:loginHandler"
+    api_endpoints:
+      - method: POST
+        path: /api/auth/login
+        handler: "auth/routes.ts:loginHandler"
+    core_symbols:
+      functions: [login, createToken, verifyToken, authenticate, requireAdmin]
+      types: [User]
+    primary_files:
+      - src/auth/routes.ts
+      - src/auth/service.ts
+      - src/auth/middleware.ts
+    shared_files:
+      - file: src/logging/service.ts
+        role: "records_login_events"
+        also_in: [login-audit-logging, data-cleanup]
+      - file: src/middleware/rateLimit.ts
+        role: "login_rate_limiting"
+        also_in: [rate-limiting]
+      - file: src/config.ts
+        role: "jwt_and_rate_limit_config"
+        also_in: [rate-limiting, data-cleanup, jwt-token-management]
+      - file: src/db/connection.ts
+        role: "database_access"
+        also_in: [database-management, login-audit-logging, data-cleanup]
+    data_entities: [User]
+    depends_on:
+      - business_function: jwt-token-management
+        reason: "uses createToken, verifyToken"
+      - business_function: login-audit-logging
+        reason: "records login events via logging/service.ts:record"
+      - business_function: rate-limiting
+        reason: "uses loginLimiter middleware"
+    clustering_signals:
+      seed: true
+      call_graph: true
+      import_proximity: true
+      naming: true
+    size:
+      primary_files: 3
+      shared_files: 4
+      total_files: 7
+      kb_tokens_estimate: 12000
+
+  - name: "login-audit-logging"
+    description: "记录和查询登录审计日志"
+    category: admin
+    confidence: 0.88
+    seeds:
+      - type: route
+        source: "src/logging/routes.ts:router.get('/login-logs')"
+        handler: "logging/routes.ts:adminQueryHandler"
+    api_endpoints:
+      - method: GET
+        path: /api/admin/login-logs
+        handler: "logging/routes.ts:adminQueryHandler"
+      - method: GET
+        path: /api/admin/login-logs/:userId
+        handler: "logging/routes.ts:userQueryHandler"
+    core_symbols:
+      functions: [record, query, queryByUser, insertLoginLog, queryLoginLogs]
+      types: [LoginLog, LoginLogFilters, PaginatedResult, PaginationParams]
+    primary_files:
+      - src/logging/service.ts
+      - src/logging/routes.ts
+    shared_files:
+      - file: src/db/models.ts
+        role: "login_log_crud"
+        also_in: [data-cleanup]
+      - file: src/auth/middleware.ts
+        role: "authentication_and_admin_check"
+        also_in: [user-authentication]
+    data_entities: [LoginLog]
+    depends_on:
+      - business_function: user-authentication
+        reason: "uses authenticate, requireAdmin middleware"
+    clustering_signals:
+      seed: true
+      call_graph: true
+      import_proximity: true
+      naming: true
+    size:
+      primary_files: 2
+      shared_files: 2
+      total_files: 4
+      kb_tokens_estimate: 10000
+
+  - name: "jwt-token-management"
+    description: "JWT token 创建与验证"
+    category: core
+    confidence: 0.95
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [createToken, verifyToken]
+      types: []
+    primary_files: []
+    shared_files:
+      - file: src/auth/service.ts
+        role: "token_creation_and_verification"
+        also_in: [user-authentication]
+      - file: src/auth/middleware.ts
+        role: "token_verification_in_request"
+        also_in: [user-authentication]
+      - file: src/config.ts
+        role: "jwt_secret_and_expiry"
+        also_in: [user-authentication, rate-limiting]
+    data_entities: []
+    depends_on:
+      - business_function: user-authentication
+        reason: "called by login()"
+    clustering_signals:
+      seed: false
+      call_graph: true
+      import_proximity: false
+      naming: true
+    size:
+      primary_files: 0
+      shared_files: 3
+      total_files: 3
+      kb_tokens_estimate: 4000
+
+  - name: "self-service-log-query"
+    description: "用户查询和删除自己的登录日志"
+    category: core
+    confidence: 0.90
+    seeds:
+      - type: route
+        source: "src/logging/routes.ts:router.get('/me/login-logs')"
+        handler: "logging/routes.ts:selfServiceHandler"
+    api_endpoints:
+      - method: GET
+        path: /api/user/me/login-logs
+        handler: "logging/routes.ts:selfServiceHandler"
+      - method: DELETE
+        path: /api/user/me/login-logs
+        handler: "logging/routes.ts:selfServiceDeleteHandler"
+    core_symbols:
+      functions: [queryByUser, deleteByUser]
+      types: [LoginLog]
+    primary_files: []
+    shared_files:
+      - file: src/logging/routes.ts
+        role: "user_routes"
+        also_in: [login-audit-logging]
+      - file: src/logging/service.ts
+        role: "query_and_delete_delegation"
+        also_in: [login-audit-logging, data-cleanup]
+      - file: src/db/models.ts
+        role: "data_access"
+        also_in: [login-audit-logging, data-cleanup]
+    depends_on:
+      - business_function: user-authentication
+      - business_function: login-audit-logging
+    clustering_signals:
+      seed: true
+      call_graph: true
+      import_proximity: false
+      naming: false
+    size:
+      primary_files: 0
+      shared_files: 3
+      total_files: 3
+      kb_tokens_estimate: 4000
+
+  - name: "rate-limiting"
+    description: "API 速率限制（登录、管理查询、通用流量）"
+    category: infrastructure
+    confidence: 0.97
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [loginLimiter, adminQueryLimiter, generalLimiter]
+      types: []
+    primary_files:
+      - src/middleware/rateLimit.ts
+    shared_files:
+      - file: src/config.ts
+        role: "rate_limit_configuration"
+        also_in: [user-authentication, jwt-token-management]
+    data_entities: []
+    depends_on:
+      - business_function: shared-foundations
+        reason: "uses CONFIG.RATE_LIMIT"
+    clustering_signals:
+      seed: false
+      call_graph: false
+      import_proximity: true
+      naming: true
+    size:
+      primary_files: 1
+      shared_files: 1
+      total_files: 2
+      kb_tokens_estimate: 3000
+
+  - name: "health-checking"
+    description: "系统健康检查端点"
+    category: infrastructure
+    confidence: 0.93
+    seeds:
+      - type: route
+        source: "src/app.ts:app.get('/health')"
+        handler: "app.ts:healthHandler"
+    api_endpoints:
+      - method: GET
+        path: /health
+        handler: "app.ts:healthHandler"
+      - method: GET
+        path: /api/health/detailed
+        handler: "app.ts:detailedHealthHandler"
+    core_symbols:
+      functions: [init]
+      types: []
+    primary_files: []
+    shared_files:
+      - file: src/app.ts
+        role: "health_endpoints_and_startup"
+        also_in: [data-cleanup, error-handling]
+      - file: src/auth/middleware.ts
+        role: "authentication"
+        also_in: [user-authentication, login-audit-logging]
+      - file: src/db/connection.ts
+        role: "db_health_probe"
+        also_in: [database-management]
+    data_entities: []
+    depends_on:
+      - business_function: database-management
+    clustering_signals:
+      seed: true
+      call_graph: true
+      import_proximity: false
+      naming: true
+    size:
+      primary_files: 0
+      shared_files: 3
+      total_files: 3
+      kb_tokens_estimate: 4000
+
+  - name: "data-cleanup"
+    description: "定期清理过期登录日志（90天 TTL）"
+    category: admin
+    confidence: 0.91
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [startCleanupJob, stopCleanupJob, runCleanup, deleteOldLoginLogs]
+      types: []
+    primary_files:
+      - src/logging/cleanup.ts
+    shared_files:
+      - file: src/logging/service.ts
+        role: "cleanup_delegation"
+        also_in: [login-audit-logging]
+      - file: src/db/models.ts
+        role: "delete_old_logs"
+        also_in: [login-audit-logging]
+      - file: src/config.ts
+        role: "retention_config"
+        also_in: [user-authentication, rate-limiting, jwt-token-management]
+      - file: src/app.ts
+        role: "startup_trigger"
+        also_in: [health-checking, error-handling]
+    depends_on:
+      - business_function: login-audit-logging
+    clustering_signals:
+      seed: false
+      call_graph: true
+      import_proximity: true
+      naming: true
+    size:
+      primary_files: 1
+      shared_files: 4
+      total_files: 5
+      kb_tokens_estimate: 5000
+
+  - name: "database-management"
+    description: "SQLite 连接管理、Schema 迁移"
+    category: foundation
+    confidence: 0.96
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [getDb, closeDb, setDb, runMigrations]
+      types: []
+    primary_files:
+      - src/db/connection.ts
+      - src/db/migrate.ts
+    shared_files:
+      - file: src/db/models.ts
+        role: "data_access_layer"
+        also_in: [login-audit-logging, data-cleanup]
+    data_entities: []
+    depends_on:
+      - business_function: shared-foundations
+        reason: "uses CONFIG.DB_PATH"
+    clustering_signals:
+      seed: false
+      call_graph: true
+      import_proximity: true
+      naming: false
+    size:
+      primary_files: 2
+      shared_files: 1
+      total_files: 3
+      kb_tokens_estimate: 4000
+
+  - name: "error-handling"
+    description: "全局 Express 错误处理（500、404）"
+    category: infrastructure
+    confidence: 0.98
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [errorHandler, notFoundHandler]
+      types: []
+    primary_files:
+      - src/middleware/errorHandler.ts
+    shared_files:
+      - file: src/app.ts
+        role: "error_handler_registration"
+        also_in: [health-checking, data-cleanup]
+    data_entities: []
+    depends_on: []
+    clustering_signals:
+      seed: false
+      call_graph: false
+      import_proximity: true
+      naming: true
+    size:
+      primary_files: 1
+      shared_files: 1
+      total_files: 2
+      kb_tokens_estimate: 2500
+
+  - name: "request-tracing"
+    description: "X-Request-ID 生成和传播"
+    category: infrastructure
+    confidence: 0.99
+    seeds: []
+    api_endpoints: []
+    core_symbols:
+      functions: [requestId]
+      types: []
+    primary_files:
+      - src/middleware/requestId.ts
+    shared_files:
+      - file: src/app.ts
+        role: "middleware_registration"
+        also_in: [health-checking, error-handling, data-cleanup]
+    data_entities: []
+    depends_on: []
+    clustering_signals:
+      seed: false
+      call_graph: false
+      import_proximity: true
+      naming: false
+    size:
+      primary_files: 1
+      shared_files: 1
+      total_files: 2
+      kb_tokens_estimate: 2000
+
+# ── 共享基础（被所有业务功能共享的类型/配置）─────────
+shared_foundations:
+  - name: "shared-foundations"
+    description: "共享类型定义和核心配置"
+    category: foundation
+    confidence: 0.99
+    core_symbols:
+      types: [User, LoginLog, AuditLog, PaginationParams, PaginatedResult, LoginLogFilters]
+      constants: [CONFIG]
+    primary_files:
+      - src/types.ts
+      - src/config.ts
+    used_by:
+      - user-authentication
+      - login-audit-logging
+      - jwt-token-management
+      - self-service-log-query
+      - rate-limiting
+      - data-cleanup
+      - database-management
+      - health-checking
+    size:
+      primary_files: 2
+      shared_files: 0
+      kb_tokens_estimate: 3000
+
+# ── 元信息 ──
+generated_at: "2026-07-04T14:00:00Z"
+generated_by: "devloop-reverse (v2 clustering)"
+total_business_functions: 10
+total_files_analyzed: 16
+clustering_quality_score: 0.92
+
+# ── 向后兼容 ──
+migration_from:
+  schema_version: "1.0"
+  previous_manifest: "knowledge-base/.migrated-from-v1/manifest.yaml"
+  migration_date: "2026-07-04T14:00:00Z"

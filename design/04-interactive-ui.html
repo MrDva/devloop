@@ -136,6 +136,9 @@
   .gate-pass { color: var(--green); }
   .gate-fail { color: var(--red); }
   .gate-warn { color: var(--yellow); }
+.gate-type-hard { background: var(--red); color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; }
+.gate-type-soft { background: var(--yellow); color: #000; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; }
+.gate-type-mixed { background: var(--purple); color: #fff; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; }
 
   /* State machine */
   .state-machine { margin-top: 16px; }
@@ -424,7 +427,6 @@
         <button class="toggle-btn" onclick="showFlowchart('recovery')">中断恢复</button>
       </div>
       <div id="flowchartContent" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;overflow-x:auto;">
-        <p style="color:var(--text-muted);text-align:center;padding:40px;">Mermaid 流程图请参考 <a href="./03-flowcharts.md" style="color:var(--accent)">03-flowcharts.md</a></p>
       </div>
     </div>
 
@@ -462,6 +464,18 @@
           </tbody>
         </table>
 
+        <div class="section-title">确认级别判定</div>
+        <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:0.85rem;">
+          <thead>
+            <tr><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">级别</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">触发条件</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">Design确认</th><th style="text-align:left;padding:8px;background:var(--bg);color:var(--text-muted);">Plan确认</th></tr>
+          </thead>
+          <tbody>
+            <tr><td style="padding:8px;"><span class="state-badge draft">Level 1</span></td><td style="padding:8px;">bugfix + low + ≤1 模块</td><td style="padding:8px;color:var(--red)">❌ 不暂停</td><td style="padding:8px;color:var(--red)">❌ 不暂停</td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge proposed">Level 2</span></td><td style="padding:8px;">默认 (不满足 L1/L3)</td><td style="padding:8px;color:var(--green)">✅ 暂停</td><td style="padding:8px;color:var(--red)">❌ 自动</td></tr>
+            <tr><td style="padding:8px;"><span class="state-badge planned">Level 3</span></td><td style="padding:8px;">high / feature / ≥3 模块</td><td style="padding:8px;color:var(--green)">✅ 暂停</td><td style="padding:8px;color:var(--green)">✅ 暂停</td></tr>
+          </tbody>
+        </table>
+
         <div class="section-title">异常路径</div>
         <ul style="font-size:0.85rem;color:var(--text-muted);padding-left:20px;">
           <li><code>draft → rejected</code>: G2.1 失败（不可恢复的格式错误）</li>
@@ -481,6 +495,7 @@
         <button class="template-tab" onclick="showTemplate('requirement-doc')">需求文档模板</button>
         <button class="template-tab" onclick="showTemplate('kb-module')">KB 模块模板</button>
         <button class="template-tab" onclick="showTemplate('impact-analysis')">影响分析模板</button>
+        <button class="template-tab" onclick="showTemplate('nfr-checklist')">NFR 评估清单</button>
         <button class="template-tab" onclick="showTemplate('guard-config')">门禁配置模板</button>
         <button class="template-tab" onclick="showTemplate('loop-state')">状态文件模板</button>
       </div>
@@ -522,11 +537,10 @@
   <div class="sidebar" id="sidebar">
     <div class="section-title">系统快览</div>
     <div style="font-size:0.8rem;">
-      <p style="margin:4px 0"><strong>阶段数:</strong> 5</p>
-      <p style="margin:4px 0"><strong>Skill 数:</strong> 15+ 可复用</p>
-      <p style="margin:4px 0"><strong>门禁数:</strong> 18</p>
-      <p style="margin:4px 0"><strong>模板数:</strong> 12</p>
-      <p style="margin:4px 0"><strong>人工确认点:</strong> 4</p>
+      <p style="margin:4px 0"><strong>Skill 数:</strong> 18（6 编排 + 12 复用）</p>
+      <p style="margin:4px 0"><strong>门禁数:</strong> 20（14 硬 + 1 软 + 5 混合）</p>
+      <p style="margin:4px 0"><strong>模板数:</strong> 11（含 NFR 强制评估清单）</p>
+      <p style="margin:4px 0"><strong>人工确认点:</strong> 按确认级别 (L1=0, L2=1, L3=2)</p>
       <p style="margin:4px 0"><strong>Git 策略:</strong> 同仓库 / 目录隔离</p>
     </div>
 
@@ -537,14 +551,14 @@
 
     <div class="section-title">相关文档</div>
     <div style="font-size:0.8rem;">
-      <p style="margin:4px 0">📄 <a href="./01-overview.md" style="color:var(--accent)">总体设计</a></p>
-      <p style="margin:4px 0">📄 <a href="./02-detailed-design.md" style="color:var(--accent)">详细设计</a></p>
-      <p style="margin:4px 0">📄 <a href="./03-flowcharts.md" style="color:var(--accent)">流程图集</a></p>
+      <p style="margin:4px 0">📄 <a href="01-overview.md" style="color:var(--accent)">总体设计</a></p>
+      <p style="margin:4px 0">📄 <a href="02-detailed-design.md" style="color:var(--accent)">详细设计</a></p>
+      <p style="margin:4px 0">📄 <a href="03-flowcharts.md" style="color:var(--accent)">流程图集</a></p>
+      <p style="margin:4px 0">📄 <a href="05-implementation-tasks.md" style="color:var(--accent)">实现任务清单</a></p>
     </div>
 
     <div class="section-title">关键决策 (ADR)</div>
     <div id="adrList" style="font-size:0.75rem;"></div>
-
     <div class="section-title">未考虑问题速查</div>
     <div id="issuesList" style="font-size:0.75rem;"></div>
   </div>
@@ -562,16 +576,16 @@ const stageData = {
     output: 'knowledge-base/ + requirements/baseline/',
     skills: [
       { name: 'codegraph_explore', type: 'primary', desc: '代码扫描与模块识别' },
-      { name: 'comet-knowledge', type: 'primary', desc: '逐模块深度知识提取 (并行)' },
+      { name: 'dispatching-parallel-agents', type: 'primary', desc: '并行分派模块分析代理' },
       { name: 'brainstorming', type: 'secondary', desc: '从KB反向推断需求' },
       { name: 'devloop-guard', type: 'gate', desc: '门禁 G1.1-G1.5' },
     ],
     gates: [
-      { id: 'G1.1', name: '模块覆盖率', rule: 'modules_analyzed / total_modules >= 0.8', onFail: 'warn_and_continue' },
-      { id: 'G1.2', name: 'KB条目完整性', rule: 'all modules have overview + api', onFail: 'block_and_retry' },
-      { id: 'G1.3', name: 'KB内部一致性', rule: 'all cross-references valid', onFail: 'block_and_retry' },
-      { id: 'G1.4', name: '需求反向覆盖率', rule: 'modules_covered / total >= 0.9', onFail: 'warn_and_continue' },
-      { id: 'G1.5', name: '阶段一总门禁', rule: 'G1.1-G1.4 consolidated', onFail: 'block_and_retry' },
+      { id: 'G1.1', name: '模块覆盖率', type: 'hard', rule: 'modules_analyzed / total_modules >= 0.8', onFail: 'warn_and_continue' },
+      { id: 'G1.2', name: 'KB条目完整性', type: 'hard', rule: 'all modules have overview + api', onFail: 'block_and_retry' },
+      { id: 'G1.3', name: 'KB内部一致性', type: 'mixed', rule: 'all cross-references valid', onFail: 'block_and_retry' },
+      { id: 'G1.4', name: '需求反向覆盖率', type: 'hard', rule: 'modules_covered / total >= 0.9', onFail: 'warn_and_continue' },
+      { id: 'G1.5', name: '阶段一总门禁', type: 'hard', rule: 'G1.1-G1.4 consolidated', onFail: 'block_and_retry' },
     ],
     artifacts: ['knowledge-base/.manifest.yaml', 'knowledge-base/modules/*/', 'knowledge-base/architecture/', 'requirements/baseline/REQ-*.md'],
     humanGates: 0,
@@ -581,23 +595,25 @@ const stageData = {
     name: '阶段二：需求摄入',
     color: 'var(--stage2)',
     skill: 'devloop-intake',
-    description: '接收外部需求输入，结合知识库生成结构化需求文档',
+    description: '接收外部需求，结合KB生成结构化需求文档。强制NFR评估(7维度)。基线需求标记usage_restriction:reference_only',
     input: '外部需求 + 知识库',
     output: 'requirements/in-progress/REQ-*.md + openspec/changes/',
     skills: [
       { name: 'devloop-intake', type: 'primary', desc: '输入解析 + 格式标准化' },
       { name: 'codegraph_explore', type: 'secondary', desc: 'KB 上下文检索与加载' },
       { name: 'brainstorming', type: 'primary', desc: '影响分析 + 需求完善' },
-      { name: 'comet-open', type: 'primary', desc: '创建 OpenSpec Change' },
+      
+      { name: 'nfr-checklist (编排层)', type: 'primary', desc: 'NFR 强制评估: 7维度遍历 + 补充验收标准' },
       { name: 'openspec-propose', type: 'secondary', desc: '生成正式 Proposal' },
       { name: 'devloop-guard', type: 'gate', desc: '门禁 G2.1-G2.5' },
     ],
     gates: [
-      { id: 'G2.1', name: '输入有效性', rule: 'title + description 非空', onFail: 'reject' },
-      { id: 'G2.2', name: 'KB上下文相关性', rule: '至少匹配 1 个相关模块', onFail: 'warn_and_continue' },
-      { id: 'G2.3', name: '影响分析完整性', rule: '必须包含模块/数据/API变更', onFail: 'block_and_retry' },
-      { id: 'G2.4', name: '需求文档结构', rule: 'frontmatter 必填字段 + 引用有效', onFail: 'block_and_retry' },
-      { id: 'G2.5', name: '阶段二总门禁', rule: 'G2.1-G2.4 consolidated', onFail: 'block_and_retry' },
+      { id: 'G2.1', name: '输入有效性', type: 'hard', rule: 'title + description 非空', onFail: 'reject' },
+      { id: 'G2.2', name: 'KB上下文相关性', type: 'soft', rule: '至少匹配 1 个相关模块', onFail: 'warn_and_continue' },
+      { id: 'G2.3', name: '影响分析完整性', type: 'mixed', rule: '必须包含模块/数据/API变更', onFail: 'block_and_retry' },
+      { id: 'G2.4', name: '需求文档结构', type: 'hard', rule: 'frontmatter 必填字段 + 引用有效', onFail: 'block_and_retry' },
+      { id: 'G2.3-NFR', name: 'NFR评估完整性', type: 'hard', rule: '所有触发维度已产出验收标准，未触发维度已标注不适用', onFail: 'block_and_retry' },
+      { id: 'G2.5', name: '阶段二总门禁', type: 'hard', rule: 'G2.1-G2.4 consolidated', onFail: 'block_and_retry' },
     ],
     artifacts: ['requirements/in-progress/REQ-*.md', 'openspec/changes/<name>/proposal.md', 'openspec/changes/<name>/.comet.yaml'],
     humanGates: 1,
@@ -621,10 +637,10 @@ const stageData = {
       { name: 'devloop-guard', type: 'gate', desc: '门禁 G3.1-G3.4' },
     ],
     gates: [
-      { id: 'G3.1', name: '需求可构建性', rule: 'status允许 + KB引用有效', onFail: 'block (skip)' },
-      { id: 'G3.2', name: 'Design质量', rule: 'comet-guard design ALL CHECKS PASSED', onFail: 'block_and_retry' },
-      { id: 'G3.3', name: 'Plan质量', rule: '任务拆分无循环依赖', onFail: 'block_and_retry' },
-      { id: 'G3.4', name: 'Build质量', rule: '所有task勾选 + 测试覆盖不降', onFail: 'block_and_retry' },
+      { id: 'G3.1', name: '需求可构建性', type: 'hard', rule: 'status允许 + KB引用有效', onFail: 'block (skip)' },
+      { id: 'G3.2', name: 'Design质量', type: 'mixed', rule: 'comet-guard design ALL CHECKS PASSED', onFail: 'block_and_retry' },
+      { id: 'G3.3', name: 'Plan质量', type: 'mixed', rule: '任务拆分无循环依赖', onFail: 'block_and_retry' },
+      { id: 'G3.4', name: 'Build质量', type: 'hard', rule: '所有task勾选 + 测试覆盖不降', onFail: 'block_and_retry' },
     ],
     artifacts: ['openspec/changes/<name>/design.md', 'openspec/changes/<name>/plan.md', 'openspec/changes/<name>/tasks.md', 'src/** 变更'],
     humanGates: 2,
@@ -645,10 +661,10 @@ const stageData = {
       { name: 'devloop-guard', type: 'gate', desc: '门禁 G4.1-G4.4' },
     ],
     gates: [
-      { id: 'G4.1', name: '自动化验证', rule: '全部测试 + 构建 + Lint通过', onFail: 'block_and_retry (max 3)' },
-      { id: 'G4.2', name: '代码审查', rule: '无Critical + High <= 阈值', onFail: 'block_and_retry' },
-      { id: 'G4.3', name: '修复循环限制', rule: '修复次数 < 3', onFail: 'pause_for_human' },
-      { id: 'G4.4', name: '阶段四总门禁', rule: 'G4.1-G4.3 + 验收标准全部满足', onFail: 'block_and_retry' },
+      { id: 'G4.1', name: '自动化验证', type: 'hard', rule: '全部测试 + 构建 + Lint通过', onFail: 'block_and_retry (max 3)' },
+      { id: 'G4.2', name: '代码审查', type: 'mixed', rule: '无Critical + High <= 阈值', onFail: 'block_and_retry' },
+      { id: 'G4.3', name: '修复循环限制', type: 'hard', rule: '修复次数 < 3', onFail: 'pause_for_human' },
+      { id: 'G4.4', name: '阶段四总门禁', type: 'hard', rule: 'G4.1-G4.3 + 验收标准全部满足', onFail: 'block_and_retry' },
     ],
     artifacts: ['验证报告', '代码审查报告', 'Git commit (代码)', 'Git commit (需求状态)', 'requirements/completed/REQ-*.md'],
     humanGates: 1,
@@ -667,7 +683,7 @@ const stageData = {
       { name: 'Cron/Watch', type: 'secondary', desc: '定时扫描 + 事件监听' },
     ],
     gates: [
-      { id: 'G5.1', name: '状态一致性', rule: 'Git文件状态 = frontmatter状态', onFail: 'block_and_retry' },
+      { id: 'G5.1', name: '状态一致性', type: 'hard', rule: 'Git文件状态 = frontmatter状态', onFail: 'block_and_retry' },
     ],
     artifacts: ['下一需求自动开始', '通知输出'],
     humanGates: 0,
@@ -848,6 +864,25 @@ dependencies:
 {{#each kb_refs}}
 - [[{{ this }}]]
 {{/each}}`,
+  'nfr-checklist': `# NFR 强制评估清单 (7 维度)
+
+## 评估维度
+| # | 维度 | 触发条件 |
+|---|------|---------|
+| 1 | 认证/授权 | type∈[feature,enhancement] 且涉及用户操作 |
+| 2 | 输入校验 | 涉及 API 或数据模型变更 |
+| 3 | 数据保护 | 涉及用户数据或 type∉[chore] |
+| 4 | 速率限制 | 涉及新 API 端点 |
+| 5 | 审计日志 | priority∈[high,medium] 或涉及资金/权限 |
+| 6 | 性能 | type=feature 且涉及数据查询/外部调用 |
+| 7 | 可访问性 | 涉及前端 UI 变更 |
+
+## 输出格式
+触发维度: 分析 + 补充验收标准
+未触发维度: 标注「不适用」及原因
+
+> 阶段二影响分析后强制执行，不可跳过。`,
+
   'guard-config': `# 门禁配置
 gates:
   stage-1-reverse:
@@ -975,12 +1010,13 @@ function selectStage(stageId) {
   // Gates
   if (data.gates.length > 0) {
     html += `<div class="section-title">质量门禁</div>`;
-    html += `<table class="gate-table"><tr><th>ID</th><th>名称</th><th>规则</th><th>失败动作</th></tr>`;
+    html += `<table class="gate-table"><tr><th>ID</th><th>名称</th><th>类型</th><th>规则</th><th>失败动作</th></tr>`;
     data.gates.forEach(g => {
       const actionClass = g.onFail.includes('block') ? 'gate-fail' : g.onFail.includes('warn') ? 'gate-warn' : 'gate-pass';
       html += `<tr>`;
       html += `<td><strong>${g.id}</strong></td>`;
       html += `<td>${g.name}</td>`;
+      html += `<td><span class="gate-type-${g.type}">${g.type}</span></td>`;
       html += `<td style="font-size:0.8rem"><code>${g.rule}</code></td>`;
       html += `<td class="${actionClass}">${g.onFail}</td>`;
       html += `</tr>`;
@@ -1026,7 +1062,6 @@ function showFlowchart(name) {
 
   const content = document.getElementById('flowchartContent');
   content.innerHTML = `<p style="color:var(--text-muted);text-align:center;padding:40px;">
-    Mermaid 流程图请参考 <a href="./03-flowcharts.md" style="color:var(--accent)">03-flowcharts.md</a><br/><br/>
     <small>章节: ${name === 'overall' ? '1. 系统全景图' :
       name === 'stage1' ? '2. 阶段一详细流程' :
       name === 'stage2' ? '3. 阶段二详细流程' :
@@ -1055,7 +1090,7 @@ function showTemplate(name) {
 // ============ Simulation ============
 const simSteps = [
   { stage: 1, desc: '阶段一：代码扫描 → 模块识别 (codegraph_explore)', dot: 1 },
-  { stage: 1, desc: '阶段一：并行模块深度分析 (comet-knowledge × N)', dot: 1 },
+  { stage: 1, desc: '阶段一：并行模块深度分析 (dispatching-parallel-agents × N)', dot: 1 },
   { stage: 1, desc: '阶段一：KB汇总 + 需求反向推断', dot: 1 },
   { stage: 'gate', desc: '门禁 G1.1-G1.5: 模块覆盖率 85%, KB条目完整 ✓, 一致性 ✓, 需求覆盖率 92%', dot: 1 },
   { stage: 1, desc: '阶段一完成 ✓ Git Commit: [devloop] stage:1', dot: 1 },

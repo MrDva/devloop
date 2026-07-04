@@ -1,32 +1,58 @@
 # DevLoop 门禁配置 (Guard Configuration)
-# 18 个门禁，硬/软分离
+# 19 个门禁（含 G1.0 项目感知），硬/软分离
 # 硬门禁: 脚本自动判定（test -f, grep -c, 退出码等），可 BLOCK
 # 软门禁: LLM 语义评估，仅 WARN 不阻断
 # mixed: 硬门禁 + 软门禁两层，分别判定
 
 gates:
-  # ═══════════════════ Phase 1: 逆向分析 ═══════════════════
+  # ═══════════════════ Phase 1: 逆向分析 (v2) ═══════════════════
   stage-1:
-    - id: G1.1
-      name: 模块覆盖率
+    - id: G1.0
+      name: 项目感知有效性 🆕
       type: hard
       stage: 1
-      description: "确保逆向分析覆盖了足够多的模块"
+      description: "确保项目类型检测正确且种子策略匹配"
       checks:
-        - type: file_count
-          rule: "modules_analyzed / total_modules >= 0.8"
-          detail: "knowledge-base/modules/ 下目录数 >= 源码目录数 * 0.8"
+        - type: field_nonempty
+          rule: "project_profile.type 非空"
+          detail: "knowledge-base/.manifest.yaml → project_profile.type 必须存在"
+        - type: field_match
+          rule: "seed_strategy 与 project_profile.type 匹配"
+          detail: "例如 web-api 必须使用 api-route 种子策略"
+        - type: count
+          rule: "detection_signals 维度 >= 2"
+          detail: "至少 2 个维度（包管理/框架/入口/目录）有明确信号"
+      on_fail: block_and_retry
+
+    - id: G1.1
+      name: 业务功能覆盖率
+      type: hard
+      stage: 1
+      description: "确保源文件被充分分配到业务功能，入口端点全覆盖"
+      checks:
+        - type: count
+          rule: "files_assigned_to_at_least_one_bf / total_src_files >= 0.90"
+          detail: "至少 90% 的源文件被分配到至少一个业务功能"
+        - type: count
+          rule: "seeds_attributed / total_seeds >= 0.95"
+          detail: "web-api: API 端点覆盖率 >= 95%; cli: 命令覆盖率; generic: 文件覆盖率"
+        - type: count
+          rule: "orphan_files <= 3"
+          detail: "未分配文件不超过 3 个（允许的配置/类型文件）"
       on_fail: warn_and_continue
 
     - id: G1.2
       name: KB条目完整性
       type: hard
       stage: 1
-      description: "每个已分析模块至少有 overview.md 和 api.md"
+      description: "每个业务功能至少有 overview.md 和 api.md"
       checks:
-        - type: file_exists_per_module
-          rule: "all(module.has('overview.md') AND module.has('api.md') for module in modules)"
-          detail: "每个 knowledge-base/modules/<name>/ 下必须存在 overview.md 和 api.md"
+        - type: file_exists_per_bf
+          rule: "all(bf.has('overview.md') AND bf.has('api.md') for bf in business_functions)"
+          detail: "每个 knowledge-base/business-functions/<name>/ 下必须存在 overview.md 和 api.md"
+        - type: legacy_check
+          rule: "if knowledge-base/modules/ exists: mark as stale"
+          detail: "v1 旧模块目录标记为 stale，保留至 .migrated-from-v1/"
       on_fail: block_and_retry
 
     - id: G1.3
@@ -37,9 +63,9 @@ gates:
       hard:
         - type: wiki_links_valid
           rule: "all_wiki_link_targets_exist(knowledge-base/)"
-          detail: "所有 [[module-name]] 引用指向的目标文件必须存在"
+          detail: "所有 [[bf-name]] 引用指向的目标文件必须存在"
       soft:
-        - rule: "交叉引用指向的模块描述与引用上下文一致"
+        - rule: "交叉引用指向的业务功能描述与引用上下文一致"
           detail: "引用内容语义匹配（LLM 评估）"
       on_fail:
         hard: block_and_retry
@@ -49,11 +75,11 @@ gates:
       name: 需求反向覆盖率
       type: hard
       stage: 1
-      description: "每个模块至少被 1 个基线需求覆盖，低置信度需求 <= 20%"
+      description: "core/admin/command/page/public-api 类别的业务功能至少被 1 个需求覆盖"
       checks:
         - type: count
-          rule: "modules_covered_by_req / total_modules >= 0.9"
-          detail: "requirements/baseline/ 中覆盖的模块数占比"
+          rule: "business_functions_covered(core+admin+command+page+public-api) / total_target_bfs >= 0.90"
+          detail: "排除 infrastructure 和 foundation 类别后计算覆盖率"
         - type: count
           rule: "count(confidence == low) / count(all_req) <= 0.2"
           detail: "低置信度基线需求比例不超过 20%"
@@ -63,11 +89,17 @@ gates:
       name: 阶段一总门禁
       type: hard
       stage: 1
-      description: "阶段一所有硬门禁的汇总判定"
+      description: "阶段一所有硬门禁 + 聚类质量 + 孤儿文件 的汇总判定"
       checks:
         - type: gate_aggregate
-          rule: "G1.2 = pass AND (G1.3.hard = pass OR G1.1 = pass)"
-          detail: "G1.2 必须通过，G1.1/G1.3.hard 至少有一个通过"
+          rule: "G1.0 = pass AND G1.2 = pass AND G1.3.hard = pass"
+          detail: "项目感知、KB完整性、KB一致性硬门禁必须通过"
+        - type: count
+          rule: "clustering_quality_score >= 0.80"
+          detail: "weighted_average_confidence 不低于 0.80"
+        - type: count
+          rule: "orphan_files <= 3"
+          detail: "未分配文件数不超过 3"
       on_fail: block_and_retry
 
   # ═══════════════════ Phase 2: 需求摄入 ═══════════════════

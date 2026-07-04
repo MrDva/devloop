@@ -21,84 +21,255 @@
 ### 1.1 总编排 Skill: `devloop-reverse`
 
 ```
-devloop-reverse (🆕 编排 Skill，~150 行)
-├── 1.1 代码扫描        → codegraph_explore (MCP) ✅ 已有
-├── 1.2 模块深度分析    → dispatching-parallel-agents ✅ 已有 (每个 agent 内部用 codegraph_node)
-├── 1.3 KB 汇总整合     → (编排层逻辑) 🆕
-├── 1.4 需求反向推断    → brainstorming ✅ 已有
-├── 1.5 门禁校验        → devloop-guard 🆕 (T0.3)
-├── 1.6 Git 提交        → git (Bash) ✅ 已有
+devloop-reverse (🆕 编排 Skill，~200 行)
+├── 1.2.1 项目感知      → codegraph_explore (MCP) ✅ 已有
+├── 1.2.2 代码扫描      → codegraph_explore + codegraph_callers (MCP) ✅ 已有 (七阶段多信号聚类)
+├── 1.2.3 模块深度分析  → dispatching-parallel-agents ✅ 已有 (每个 agent 内部用 codegraph_node)
+├── 1.2.4 KB 汇总整合   → (编排层逻辑) 🆕
+├── 1.2.5 需求反向推断  → brainstorming ✅ 已有
+├── 1.2.6 门禁校验      → devloop-guard 🆕 (T0.3)
+├── 1.2.7 Git 提交      → git (Bash) ✅ 已有
 └── 状态管理            → comet-state 🆕 (T0.2)
 ```
 
 ### 1.2 子步骤详解
 
-#### 1.2.1 代码扫描
+#### 1.2.1 项目感知（环境检测 + 策略选择）🆕
+
+**目标**: 在聚类之前确定项目类型和技术栈，选择对应的种子策略和分类体系。
 
 **输入**: 项目根目录  
-**产出**: `knowledge-base/.manifest.yaml` — 模块清单
+**产出**: `knowledge-base/.manifest.yaml` → `project_profile:` 区块 + 种子策略配置
+
+##### 检测信号与判定逻辑
+
+系统从四个维度收集信号，多信号投票决定项目类型：
+
+| 维度 | 检测内容 | 示例 |
+|------|---------|------|
+| 包管理文件 | `package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml` | 确定语言和运行时 |
+| 框架依赖 | `dependencies` / `requirements` 中的框架包 | express, react, commander |
+| 入口文件特征 | `app.listen()` vs `export {}` vs `commander` | Express server vs library vs CLI |
+| 目录结构 | `src/routes/` vs `src/commands/` vs `src/components/` | 项目组织模式 |
+
+**判定优先级**（第一个匹配 ≥2 个信号即停止）:
+
+```
+优先级 1: web-api     ← HTTP 框架依赖 (express, fastify, koa, gin, fastapi, django-rest)
+优先级 2: cli         ← CLI 框架依赖 (commander, yargs, click, cobra, clap)
+优先级 3: frontend    ← UI 框架依赖 (react, vue, svelte, angular, next.js)
+优先级 4: library     ← 入口文件无 main loop，仅有 export 语句
+优先级 5: data-pipeline ← ETL/workflow 框架依赖
+优先级 6: generic     ← fallback — 无法匹配以上任何类型
+```
+
+##### 种子策略选择
+
+| 项目类型 | 种子来源 | 提取方式 |
+|---------|---------|---------|
+| **web-api** | HTTP 路由注册 | `router.get/post/put/delete()` + `app.use(prefix, ...)` |
+| **cli** | CLI 命令/子命令定义 | `.command()`, `@click.command()`, `cobra.Command` |
+| **frontend** | 页面路由 + 顶层组件 | React Router `<Route>`, Vue Router `createRouter`, Next.js `pages/` |
+| **library** | 公开导出 API（index 桶文件） | `export { ... } from` / `__all__` / `pub mod` |
+| **data-pipeline** | 数据流入口函数 | ETL pipeline 定义 / DAG 节点 |
+| **generic** | 降级为改进版目录扫描 | 仍按目录分组，但额外使用调用图和命名信号子聚类 |
+
+##### 分类体系选择
+
+不同项目类型使用不同的业务功能分类标签：
+
+| 项目类型 | 分类体系 |
+|---------|---------|
+| **web-api** | core / admin / infrastructure / foundation |
+| **cli** | command / utility / infrastructure / foundation |
+| **frontend** | page / component / infrastructure / foundation |
+| **library** | public-api / internal / utility / foundation |
+| **data-pipeline** | source / transform / sink / infrastructure / foundation |
+| **generic** | business / infrastructure / foundation |
+
+##### 技术栈识别
+
+```
+输出示例:
+  language: typescript
+  runtime: node
+  framework: express
+  database: sqlite (better-sqlite3)
+  auth_library: jsonwebtoken, bcryptjs
+  validation_library: zod
+```
+
+此信息写入 manifest 的 `project_profile:` 字段，供后续阶段参考。
+
+##### 产出：project_profile 区块
 
 ```yaml
-# knowledge-base/.manifest.yaml
-modules:
-  - name: auth-service
-    path: src/auth/
-    type: service
-    files: 23
-    dependencies: [database, cache]
-  - name: api-gateway
-    path: src/gateway/
-    type: gateway
-    files: 15
-    dependencies: [auth-service]
+# knowledge-base/.manifest.yaml（部分）
+project_profile:
+  type: web-api
+  language: typescript
+  runtime: node
+  framework: express
+  database: sqlite
+  seed_strategy: api-route
+  classification: web-api
+  detection_signals:
+    - dimension: framework
+      signal: "express package detected"
+    - dimension: entry_point
+      signal: "app.listen() found in app.ts"
 ```
 
-**Skill 调用**:
+**门禁 G1.0** — 项目感知有效性 🆕:
+- 规则: `project_profile.type` 非空
+- 规则: `seed_strategy` 与检测到的类型匹配
+- 规则: 检测信号 ≥ 2 个维度
+- 失败动作: 降级为 `generic` + 记录 WARN
+
+#### 1.2.2 代码扫描（多信号业务功能聚类）🔄
+
+**输入**: 项目根目录 + 1.2.1 的种子策略和分类体系  
+**产出**: `knowledge-base/.manifest.yaml` → `business_functions:` 区块 + `shared_foundations:` 区块
+
+> **原则**: 不使用物理目录作为模块边界。通过七阶段聚类算法从代码中自动识别业务功能。
+
+##### Phase 1: 种子收集（策略自适应）
+
+根据 1.2.1 选择的种子策略从对应来源提取入口点。输出格式统一为 `{seed_id, entry_point, handler_symbol, imported_symbols}`。
+
+**web-api 示例**:
+```yaml
+# 中间产物 — 种子清单
+seeds:
+  - id: seed-1
+    entry: "POST /api/auth/login"
+    handler: "auth/routes.ts:loginHandler"
+    imports: [login, record, loginSchema]
+    mount: "app.ts:app.use('/api/auth', authRoutes)"
+  - id: seed-2
+    entry: "GET /api/admin/login-logs"
+    handler: "logging/routes.ts:adminQueryHandler"
+    imports: [query, writeAuditLog, authenticate, requireAdmin]
 ```
-codegraph_explore("列出项目的所有顶层模块和组件")
+
+**其他类型**: cli 提取 `{command, handler, imports}`，frontend 提取 `{path, component, imports}`，library 提取 `{symbol, kind, imports}`，generic 降级为所有导出函数。
+
+##### Phase 2: 实体锚点识别（语言自适应）
+
+从类型定义和数据模型文件中提取实体作为聚类锚点。通过 `codegraph_callers` 查找操作同一实体的文件。
+
+- **TypeScript**: `interface`, `type`, SQL `CREATE TABLE`
+- **Python**: `dataclass`, `NamedTuple`, SQLAlchemy model
+- **Go**: `struct`, `type X interface`
+- **Rust**: `struct`, `enum`, `trait`
+
+```yaml
+# 中间产物 — 实体锚点
+entity_anchors:
+  - name: LoginLog
+    defined_in: src/types.ts
+    operated_on_by: [db/models.ts, logging/service.ts, logging/routes.ts, auth/routes.ts]
+    db_table: login_logs
+  - name: User
+    defined_in: src/types.ts
+    operated_on_by: [auth/service.ts, auth/middleware.ts, auth/routes.ts]
 ```
 
-**门禁 G1.1** — 模块覆盖率检查:
-- 规则: 扫描到的模块数 >= 预期（源码目录数 × 0.8）
-- 失败动作: 补充手动指定的目录，重新扫描
+##### Phase 3: 调用图邻近扩展（语言无关）
 
-#### 1.2.2 模块深度分析（并行）
+对每个种子沿调用图向外扩展 2-3 层深度。使用 `codegraph_callers` 递归追踪传递依赖。Phase 3 权重最高（仅次于种子），因为调用关系是最强的功能归属信号。
 
-**输入**: 模块清单  
-**产出**: 每个模块的 KB 条目
+##### Phase 4: 导入邻近矩阵（机制通用）
 
-> **细粒度拆分策略见第 14.2 节**: 单模块上下文控制在 < 50K tokens，超大模块进一步拆分为子模块。
+构建 N×N 共现矩阵，Jaccard 相似度度量文件间的导入关系。阈值 > 0.5 的文件归为一组。仅导入语法因语言而异（import/require/use/include），机制不变。
 
-对每个模块并行调用，每个 agent 内部使用 `codegraph_node` (MCP) 获取模块符号信息：
+##### Phase 5: 命名约定强化（机制通用）
+
+按语义前缀分组符号。仅命名风格因语言而异（camelCase/snake_case/PascalCase），分组逻辑通用。
+
+```yaml
+# 中间产物 — 命名组
+naming_prefixes:
+  - prefix: "login"    → symbols: [login, loginLimiter, loginSchema, loginHandler]
+  - prefix: "token"    → symbols: [createToken, verifyToken]
+  - prefix: "audit"    → symbols: [writeAuditLog, AuditLog]
+  - prefix: "cleanup"  → symbols: [startCleanupJob, runCleanup, deleteOldLoginLogs]
 ```
-# 通过 dispatching-parallel-agents 分派，每个 agent 处理一个模块
-# agent 内部: codegraph_node --file src/<module>/
+
+##### Phase 6: 加权投票合并与去重
+
+| 信号来源 | 权重 | 说明 |
+|---------|------|------|
+| Phase 1 种子 | 3.0 | 最强的归属信号——路由入口定义了功能边界 |
+| Phase 3 调用图 | 2.0 | 调用关系是仅次于种子的强信号 |
+| Phase 4 导入邻近 | 1.5 | 导入模式反映模块耦合 |
+| Phase 5 命名约定 | 1.0 | 辅助信号——命名不一定反映真实归属 |
+
+**阈值**: 加权总分 ≥ 4.0 分配到业务功能。共享文件（归属 >1 功能，如 `logging/service.ts` 同时属于 login-audit-logging 和 data-cleanup）显式标注角色。
+
+##### Phase 7: 分类（体系自适应）
+
+根据 1.2.1 选择的分类体系为每个业务功能打标签。分类体系因项目类型而异，但聚类结果本身不受影响。
+
+```yaml
+# 产出: business_functions: 区块
+business_functions:
+  - name: "user-authentication"
+    category: core
+    confidence: 0.92
+    seeds: [{type: route, source: "auth/routes.ts:POST /login"}]
+    core_symbols: {functions: [login, createToken, verifyToken], types: [User]}
+    primary_files: [src/auth/routes.ts, src/auth/service.ts, src/auth/middleware.ts]
+    shared_files:
+      - {file: src/logging/service.ts, role: "records_login_events", also_in: [login-audit-logging]}
+    clustering_signals: {seed: true, call_graph: true, import_proximity: true, naming: true}
+    size: {primary_files: 3, shared_files: 5, total_files: 6, kb_tokens_estimate: 12000}
 ```
 
-每个模块产出:
+**门禁 G1.1** — 业务功能覆盖率（更新规则）:
+- 规则: `files_assigned / total_src_files >= 0.90`
+- 规则: `seeds_attributed / total_seeds >= 0.95`（web-api=端点覆盖率, cli=命令覆盖率, generic=文件覆盖率）
+- 规则: `orphan_files <= 3`
+- 失败动作: 降低 Phase 6 阈值重聚类，或手动指定种子
+
+#### 1.2.3 模块深度分析（并行）
+
+**输入**: 业务功能清单  
+**产出**: 每个业务功能的 KB 条目
+
+> **细粒度拆分策略见第 14.2 节**: 单业务功能上下文控制在 < 50K tokens，超大功能进一步拆分为子功能。
+
+对每个业务功能并行调用，每个 agent 内部使用 `codegraph_node` (MCP) 获取符号信息：
 ```
-knowledge-base/modules/<module-name>/
-├── overview.md       # 模块概述、职责
-├── api.md            # 对外接口（函数签名、参数、返回值）
-├── data-model.md     # 数据模型/类型定义
+# 通过 dispatching-parallel-agents 分派，每个 agent 处理一个业务功能
+# agent 内部: codegraph_node 分析该功能的所有 primary_files + shared_files
+```
+
+每个业务功能产出:
+```
+knowledge-base/business-functions/<bf-name>/
+├── overview.md       # 业务功能概述、职责、聚类证据
+├── api.md            # 对外接口（路由端点/命令/公开API）
+├── data-model.md     # 数据模型/类型定义（含共享声明）
 ├── business-logic.md # 核心业务逻辑描述
-└── dependencies.md   # 模块依赖关系
+└── dependencies.md   # 跨业务功能依赖关系
 ```
 
-**门禁 G1.2** — 模块分析完整性:
-- 规则: 每个模块目录下至少存在 `overview.md` + `api.md`
-- 失败动作: 标记缺失模块，重新分析
+**门禁 G1.2** — KB 条目完整性（更新规则）:
+- 规则: 每个业务功能目录下至少存在 `overview.md` + `api.md`
+- 规则: 若旧 `knowledge-base/modules/` 存在，标记为 `stale`
+- 失败动作: 标记缺失业务功能，重新分析
 
-#### 1.2.3 KB 汇总整合
+#### 1.2.4 KB 汇总整合
 
-**输入**: 各模块 KB 条目  
-**产出**: 项目级 KB 汇总
+**输入**: 各业务功能 KB 条目  
+**产出**: 项目级 KB 汇总 + 业务功能依赖图
 
 ```
 knowledge-base/
 ├── architecture/
 │   ├── overview.md        # 整体架构描述
-│   ├── components.md      # 组件拓扑
+│   ├── components.md      # 业务功能拓扑
 │   └── data-flow.md       # 数据流描述
 ├── apis/
 │   ├── internal.md        # 内部 API 总览
@@ -107,11 +278,13 @@ knowledge-base/
     └── global.md          # 全局数据模型
 ```
 
-**门禁 G1.3** — KB 一致性:
-- 规则: 汇总文档中的引用与实际模块 KB 条目一致
-- 实现: 解析所有 `[[module-name]]` 引用，验证目标存在
+**业务功能依赖图**: 从 manifest 的 `depends_on` 字段自动生成，展示业务功能间的调用/数据/中间件依赖链。
 
-#### 1.2.4 需求反向推断
+**门禁 G1.3** — KB 一致性:
+- 规则: 汇总文档中的引用与实际业务功能 KB 条目一致
+- 实现: 解析所有 `[[bf-name]]` 引用，验证目标存在
+
+#### 1.2.5 需求反向推断
 
 **输入**: 完整知识库  
 **产出**: 基线需求文档
@@ -129,11 +302,13 @@ requirements/baseline/
 ---
 id: REQ-001
 title: 核心认证功能
-module: auth-service
+module: auth-service              # v1 旧模块名，向后兼容
+business_function: user-authentication  # 🆕 v2 业务功能名
 status: baseline
 inferred_from:
-  - src/auth/login.ts
-  - src/auth/token.ts
+  - src/auth/service.ts
+  - src/auth/routes.ts
+  - src/auth/middleware.ts
 confidence: high
 source: auto-inferred
 usage_restriction: reference_only  # reference_only = 仅供参考，禁止作为新功能设计的强制约束
@@ -160,27 +335,30 @@ created: 2026-06-27
 ```
 
 **基线需求用途限制规则**:
-- 所有基线需求 frontmatter 必须包含 `source: auto-inferred` 和 `usage_restriction: reference_only`
-- `reference_only` 的含义：可以在阶段二影响分析时作为背景知识阅读，但不作为阶段三设计方案的强制约束
-- 如果新需求与基线需求冲突，以新需求为准（基线需求不能否决新设计）
+- 基线需求 frontmatter 必须包含 `source: auto-inferred`、`usage_restriction: reference_only` 和 `business_function:`（v2 新增）
+- `business_function:` 字段关联 v2 业务功能名，同时保留 `module:` 字段指向 v1 旧模块名以实现向后兼容
 - 门禁 G2.4 检查 `source` 和 `usage_restriction` 字段存在性
 - 门禁 G3.2 检查设计方案未将 `usage_restriction: reference_only` 的需求作为强制约束
 
-**门禁 G1.4** — 需求覆盖率:
-- 规则: 每个模块至少被 1 个需求覆盖
+**门禁 G1.4** — 需求覆盖率（更新规则）:
+- 规则: 每个 core/admin/command/page/public-api 类别的业务功能至少被 1 个需求覆盖
+- 规则: infrastructure 和 foundation 类别的业务功能免于需求覆盖要求（它们是支持性基础设施）
 - 额外规则: `confidence: low` 的需求不超过 20%
 
-#### 1.2.5 门禁汇总校验
+#### 1.2.6 门禁汇总校验
 
 **门禁 G1.5** — 阶段一总门禁（所有子门禁通过 + 以下规则）:
-- [ ] G1.1: 模块覆盖率 >= 80%
-- [ ] G1.2: 所有模块 KB 条目完整
+- [ ] G1.0: 项目感知有效性通过（project_profile.type 非空，信号 ≥ 2 维度）
+- [ ] G1.1: 业务功能覆盖率 >= 90%（文件覆盖率） + 入口覆盖率 >= 95%
+- [ ] G1.2: 所有业务功能 KB 条目完整
 - [ ] G1.3: KB 一致性验证通过
-- [ ] G1.4: 需求覆盖率 >= 90%
+- [ ] G1.4: 需求覆盖率达标（core/admin 类功能全覆盖）
+- [ ] clustering_quality >= 0.80（加权平均置信度）
+- [ ] orphan_files <= 3
 - [ ] 所有产物已 `git add` 且无 merge conflict
 - [ ] KB 总大小 > 0（防止空提交）
 
-#### 1.2.6 Git 提交
+#### 1.2.7 Git 提交
 
 ```bash
 git checkout -b kb/update-$(date +%Y-%m-%d)
@@ -855,40 +1033,54 @@ updated: {{ updated_date }}
 # 门禁配置 — 可项目级覆盖
 gates:
   stage-1-reverse:
-    - id: G1.1
-      name: 模块覆盖率
-      type: hard                                    # 硬门禁：脚本数模块数，无歧义
+    - id: G1.0
+      name: 项目感知有效性 🆕
+      type: hard                                           # 硬门禁：字段非空 + 信号计数
       checks:
-        - "modules_analyzed / total_modules >= 0.8"
+        - "project_profile.type 非空"
+        - "seed_strategy 与 project_profile.type 匹配"
+        - "detection_signals 维度 >= 2"
+      on_fail: block_and_retry                             # 失败降级为 generic + WARN
+    - id: G1.1
+      name: 业务功能覆盖率
+      type: hard                                           # 硬门禁：文件计数 + 入口覆盖率
+      checks:
+        - "files_assigned_to_at_least_one_bf / total_src_files >= 0.90"
+        - "seeds_attributed / total_seeds >= 0.95"         # web-api=端点, cli=命令, generic=文件
+        - "orphan_files <= 3"
       on_fail: warn_and_continue
     - id: G1.2
       name: KB 条目完整性
-      type: hard                                    # 硬门禁：检查文件存在性
+      type: hard                                           # 硬门禁：检查文件存在性
       checks:
-        - "all(module.has('overview.md') for module in modules)"
-        - "all(module.has('api.md') for module in modules)"
+        - "all(bf.has('overview.md') for bf in business_functions)"
+        - "all(bf.has('api.md') for bf in business_functions)"
+        - "if legacy modules/ exists: mark as stale"
       on_fail: block_and_retry
     - id: G1.3
       name: KB 内部一致性
       type: mixed
-      hard:                                         # 硬：检查交叉引用目标文件存在
+      hard:                                                # 硬：检查交叉引用目标文件存在
         - "all_wiki_link_targets_exist(knowledge-base/)"
-      soft:                                         # 软：引用内容语义是否匹配（LLM评估）
-        - "交叉引用指向的模块描述与引用上下文一致"
+      soft:                                                # 软：引用内容语义是否匹配（LLM评估）
+        - "交叉引用指向的业务功能描述与引用上下文一致"
       on_fail:
         hard: block_and_retry
         soft: warn_and_continue
     - id: G1.4
       name: 需求反向覆盖率
-      type: hard                                    # 硬门禁：数文件
+      type: hard                                           # 硬门禁：计数（排除 infrastructure/foundation）
       checks:
-        - "modules_covered_by_req / total_modules >= 0.9"
+        - "business_functions_covered_by_req(core+admin+command+page+public-api) / total_target_bfs >= 0.90"
+        - "infrastructure 和 foundation 类别免于需求覆盖"
       on_fail: warn_and_continue
     - id: G1.5
       name: 阶段一总门禁
-      type: hard                                    # 汇总门禁只看硬门禁结果
+      type: hard                                           # 汇总硬门禁 + 聚类质量 + 孤儿文件
       checks:
-        - "G1.2 = pass AND G1.3.hard = pass AND (G1.1.soft_pass OR G1.1 = pass)"
+        - "G1.0 = pass AND G1.2 = pass AND G1.3.hard = pass"
+        - "weighted_average_confidence_across_bfs >= 0.80"
+        - "orphan_files <= 3"
 
   stage-2-intake:
     - id: G2.1
@@ -1142,11 +1334,12 @@ SOFT_GATE_SCHEMA = {
 
 | 阶段 | 门禁ID | 名称 | 类型 | 判定方式 | 阻断级别 | 自动修复 |
 |------|--------|------|------|---------|---------|---------|
-| 1 | G1.1 | 模块覆盖率 | hard | 脚本（计数） | WARN | N |
+| 1 | G1.0 | 项目感知有效性 🆕 | hard | 脚本（字段非空+信号计数） | BLOCK | Y(降级generic) |
+| 1 | G1.1 | 业务功能覆盖率 | hard | 脚本（文件计数+入口覆盖率） | WARN | N |
 | 1 | G1.2 | KB条目完整性 | hard | 脚本（文件存在） | BLOCK | Y |
 | 1 | G1.3 | KB内部一致性 | mixed | hard:脚本(引用目标存在) / soft:LLM(语义匹配) | hard=BLOCK, soft=WARN | Y(hard) |
-| 1 | G1.4 | 需求反向覆盖率 | hard | 脚本（计数） | WARN | N |
-| 1 | G1.5 | 阶段一总门禁 | hard | 汇总硬门禁结果 | BLOCK | N |
+| 1 | G1.4 | 需求反向覆盖率 | hard | 脚本（计数，排除infrastructure/foundation） | WARN | N |
+| 1 | G1.5 | 阶段一总门禁 | hard | 汇总硬门禁+clustering_quality+orphan_files | BLOCK | N |
 | 2 | G2.1 | 输入有效性 | hard | 脚本（字段/枚举） | REJECT | N |
 | 2 | G2.2 | KB上下文相关性 | soft | LLM（语义匹配） | WARN | N |
 | 2 | G2.3 | 影响分析完整性 | mixed | hard:脚本(章节存在) / soft:LLM(内容质量+安全维度) | hard=BLOCK, soft=WARN | Y(hard) |
@@ -1426,6 +1619,77 @@ def save_checkpoint(stage, step, action, context):
 
 ---
 
+## 10bis. Manifest 迁移策略（v1 → v2）
+
+### 10bis.1 迁移触发
+
+当新版阶段一（v2 聚类）首次在已有目录式 manifest（`schema_version: "1.0"`）的项目上运行时自动触发。
+
+### 10bis.2 迁移流程
+
+1. **检测旧 manifest**: 检查 `knowledge-base/.manifest.yaml` 的 `schema_version` 字段。
+   - `"1.0"` 或无 `business_functions:` 根键 → 触发迁移
+   - `"2.0"` → 跳过迁移，执行增量更新
+
+2. **归档旧数据**: 
+   ```
+   knowledge-base/modules/ → knowledge-base/.migrated-from-v1/modules/
+   knowledge-base/.manifest.yaml → knowledge-base/.migrated-from-v1/manifest.yaml
+   ```
+
+3. **创建迁移记录**:
+   ```yaml
+   # knowledge-base/.migrated-from-v1/migration-record.yaml
+   migration_date: "<ISO 8601>"
+   previous_schema: "1.0"
+   current_schema: "2.0"
+   old_modules_mapping:
+     src/auth/ → user-authentication, jwt-token-management
+     src/db/ → database-management, login-audit-logging, data-cleanup
+     src/logging/ → login-audit-logging, self-service-log-query, audit-trail, data-cleanup
+     src/middleware/ → rate-limiting, error-handling, request-tracing
+     src/app.ts → health-checking, data-cleanup, error-handling
+     src/config.ts → shared-foundations
+     src/types.ts → shared-foundations
+   ```
+
+4. **执行 v2 聚类**: 按七阶段聚类在 `src/` 上运行，生成 `business_functions:` 区块。
+
+5. **更新基线需求**: 对 `requirements/baseline/` 中的每个需求：
+   - 如果 `module:` 指向已拆分的旧模块 → 更新为新的 `business_function:` 名
+   - 如果旧模块是 DevLoop 框架组件（comet-scripts 等）→ 标记为 `module: devloop-framework`，保持旧 `modules/` 结构
+
+6. **生成迁移报告**: `knowledge-base/.migration-report.yaml`。
+
+### 10bis.3 向后兼容行为
+
+- 基线需求保留 `module:` 字段指向旧模块名（新增 `business_function:` 字段指向新功能名）
+- `devloop-guard` 脚本检查 `business_functions:` 优先，fallback `modules:`
+- 阶段二 KB 上下文加载基于文件路径匹配（`kb_context:` 引用实际 KB 文件路径，非模块名）
+- DevLoop 框架组件（`.comet/scripts/`, `.claude/skills/`, `templates/`, `design/`）排除在业务功能聚类之外，保持旧 `modules/` 结构中
+
+### 10bis.4 项目类型感知的扫描排除
+
+`scan_exclude` 配置（可在 `.comet/guard-config.yaml` 覆盖）:
+```yaml
+scan_exclude:
+  - ".comet/"
+  - ".claude/"
+  - "templates/"
+  - "design/"
+  - "node_modules/"
+  - ".git/"
+  - "knowledge-base/"       # 避免自指
+  - "requirements/"
+  - "dist/"
+  - "build/"
+  - "__pycache__/"
+  - "*.test.*"
+  - "*.spec.*"
+```
+
+---
+
 ## 11. Skill 通用性设计
 
 ### 11.1 设计原则
@@ -1636,24 +1900,25 @@ generated_from:                # 来源追溯
 
 大项目的 KB 总体积可能超过 LLM 上下文窗口（~200K tokens），导致阶段二/三无法加载完整上下文。需要分层加载策略。
 
-### 14.2 逆向分析方向：细粒度模块拆分
+### 14.2 逆向分析方向：项目类型感知的细粒度业务功能拆分
 
-**原则**: 阶段一不分析"整个项目"，而是分析"每个最小可独立理解的模块"。
+**原则**: 阶段一不分析"整个项目"，而是分析"每个最小可独立理解的业务功能"。
 
 ```
-拆分策略:
-  1. codegraph 扫描 → 识别物理模块（目录/包）
-  2. 每个模块独立分析，单模块上下文 < 50K tokens
-  3. 超大模块（>100 文件）进一步拆分为子模块
-  4. 每个模块生成独立的 KB 条目（相互引用而非重复内容）
+拆分策略 (v2):
+  1. 1.2.1 项目感知 → 确定项目类型 + 种子策略 + 分类体系
+  2. 1.2.2 多信号聚类 → 自动识别业务功能边界
+  3. 每个业务功能独立分析，单功能上下文 < 50K tokens
+  4. 超大业务功能（>30 文件或 token > 50K）进一步拆分为子功能
+  5. 每个业务功能生成独立的 KB 条目（相互引用而非重复内容）
 
-拆分粒度:
-  - 小型项目 (< 100 文件): 按顶层目录拆分
-  - 中型项目 (100-500 文件): 按二级目录拆分，子模块分组
-  - 大型项目 (500+ 文件): 按功能域拆分，多级 KB 目录树
+拆分粒度 (v2):
+  - 按聚类结果拆分（信号驱动，非目录驱动）
+  - 共享文件（归属 >1 业务功能）在多个 KB 条目中引用，不重复分析
+  - infrastructure 和 foundation 类别不强制生成完整 5 文件 KB 条目
 ```
 
-**并行分析**: 各模块完全独立，使用并行 agent 同时分析（阶段一已设计并行），单个 agent 只看到自己负责的模块代码。
+**并行分析**: 各业务功能完全独立，使用并行 agent 同时分析（阶段一已设计并行），单个 agent 只看到自己负责的业务功能代码（含 primary_files + shared_files）。
 
 ### 14.3 需求摄入方向：索引式按需加载
 
@@ -1661,21 +1926,33 @@ generated_from:                # 来源追溯
 
 ```
 索引式加载流程:
-  1. 需求输入 → 关键词提取（模块名、函数名、数据实体）
-  2. 关键词 → KB 索引查询 (.manifest.yaml + frontmatter 字段)
+  1. 需求输入 → 关键词提取（模块名、函数名、数据实体、API 端点）
+  2. 关键词 → KB 索引查询 (.manifest.yaml business_functions 区块)
   3. 匹配结果排序（按相关度）
   4. 加载 Top-N 相关条目（N 由上下文预算决定）
   5. 如果匹配条目总 token 数 > 预算 → 加载摘要层（overview.md 优先于完整 api.md）
 
-索引结构 (knowledge-base/.manifest.yaml):
-  modules:
-    - name: auth-service
-      keywords: [auth, login, token, oauth, session, password]
-      entities: [User, Token, Session]
-      apis: [POST /auth/login, POST /auth/refresh]
-      files: 23
-      total_tokens_estimate: 15000  # KB 条目总 token 估算
-      summary_tokens_estimate: 2000  # overview.md 单独 token 估算
+索引结构 (knowledge-base/.manifest.yaml v2):
+  business_functions:
+    - name: user-authentication
+      api_endpoints: [POST /api/auth/login]
+      core_symbols:
+        functions: [login, createToken, verifyToken]
+        types: [User]
+      data_entities: [User]
+      keywords: [auth, login, token, oauth, session, password]    # 保留向后兼容
+      size:
+        total_files: 6
+        kb_tokens_estimate: 12000
+        summary_tokens_estimate: 1500
+
+  可检索字段（阶段二关键词匹配）:
+    - business_function.name → "user-authentication"
+    - api_endpoints[].path → "/api/auth/login"
+    - core_symbols.functions[] → "login", "createToken"
+    - core_symbols.types[] → "User"
+    - data_entities[] → "User"
+    - keywords[] → "auth", "login" (向后兼容)
 
 上下文预算分配（以 200K 窗口为例）:
   - 系统指令 + Skill 定义: ~20K

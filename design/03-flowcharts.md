@@ -25,11 +25,12 @@ graph TB
         EXT_OUT[输出<br/>Git Push / 通知]
     end
 
-    subgraph Stage1["Stage 1: 逆向分析"]
-        S1_1[代码扫描] --> S1_2[模块深度分析]
-        S1_2 --> S1_3[KB 汇总整合]
-        S1_3 --> S1_4[需求反向推断]
-        S1_4 --> GATE1{门禁 G1<br/>全部通过?}
+    subgraph Stage1["Stage 1: 逆向分析 (v2)"]
+        S1_1[1.2.1 项目感知] --> S1_2[1.2.2 多信号聚类]
+        S1_2 --> S1_3[1.2.3 业务功能分析]
+        S1_3 --> S1_4[1.2.4 KB 汇总]
+        S1_4 --> S1_5[1.2.5 需求反推]
+        S1_5 --> GATE1{门禁 G1.0-G1.5<br/>全部通过?}
     end
 
     subgraph KB["知识库 Git"]
@@ -97,7 +98,7 @@ graph TB
 
 ---
 
-## 2. 阶段一：逆向分析
+## 2. 阶段一：逆向分析（v2: 项目类型感知 + 多信号聚类）
 
 ```mermaid
 flowchart TD
@@ -106,52 +107,70 @@ flowchart TD
     CHECK -->|首次运行| FULL[全量逆向]
     CHECK -->|已存在| DELTA[增量逆向<br/>只分析变更部分]
     
-    FULL --> SCAN[1.1 代码扫描<br/>codegraph_explore]
+    FULL --> DETECT[1.2.1 项目感知<br/>检测类型+技术栈+策略]
     DELTA --> DIFF[Git diff 获取变更文件]
-    DIFF --> SCAN
+    DIFF --> DETECT
     
-    SCAN --> MANIFEST[生成模块清单<br/>knowledge-base/.manifest.yaml]
-    MANIFEST --> G1_1{门禁 G1.1<br/>模块覆盖率 >= 80%?}
-    G1_1 -->|否| ADD_MOD[补充手动指定模块]
-    ADD_MOD --> SCAN
-    G1_1 -->|是| PARALLEL[1.2 并行模块分析]
+    DETECT --> G1_0{门禁 G1.0 🆕<br/>项目感知有效?}
+    G1_0 -->|否| FALLBACK[降级为 generic<br/>记录 WARN]
+    FALLBACK --> CLUSTER
+    G1_0 -->|是| CLUSTER[1.2.2 多信号聚类]
     
-    PARALLEL --> M1[comet-knowledge<br/>模块 A]
-    PARALLEL --> M2[comet-knowledge<br/>模块 B]
-    PARALLEL --> M3[comet-knowledge<br/>模块 N...]
+    subgraph CLUSTER_PHASES["七阶段聚类"]
+        CLUSTER --> P1[Phase 1: 种子收集<br/>策略自适应]
+        P1 --> P2[Phase 2: 实体锚点<br/>语言自适应]
+        P2 --> P3[Phase 3: 调用图扩展<br/>语言无关]
+        P3 --> P4[Phase 4: 导入邻近<br/>机制通用]
+        P4 --> P5[Phase 5: 命名约定<br/>机制通用]
+        P5 --> P6[Phase 6: 加权投票<br/>合并+去重]
+        P6 --> P7[Phase 7: 分类<br/>体系自适应]
+    end
+    
+    P7 --> MANIFEST[生成业务功能清单<br/>knowledge-base/.manifest.yaml]
+    MANIFEST --> G1_1{门禁 G1.1<br/>文件覆盖率 >= 90%<br/>入口覆盖率 >= 95%?}
+    G1_1 -->|否| ADJUST[调整阈值/手动种子]
+    ADJUST --> CLUSTER
+    G1_1 -->|是| PARALLEL[1.2.3 并行业务功能分析]
+    
+    PARALLEL --> M1[agent<br/>业务功能 A]
+    PARALLEL --> M2[agent<br/>业务功能 B]
+    PARALLEL --> M3[agent<br/>业务功能 N...]
     
     M1 --> COLLECT[收集 KB 条目]
     M2 --> COLLECT
     M3 --> COLLECT
     
     COLLECT --> G1_2{门禁 G1.2<br/>KB 条目完整?}
-    G1_2 -->|否| RETRY[重试缺失模块<br/>最多3次]
+    G1_2 -->|否| RETRY[重试缺失功能<br/>最多3次]
     RETRY --> PARALLEL
-    G1_2 -->|是| INTEGRATE[1.3 KB 汇总整合]
+    G1_2 -->|是| INTEGRATE[1.2.4 KB 汇总整合]
     
     INTEGRATE --> ARCH[生成 architecture/]
     INTEGRATE --> APIS[生成 apis/]
     INTEGRATE --> MODELS[生成 data-models/]
+    INTEGRATE --> DEP_GRAPH[生成业务功能依赖图]
     
     ARCH --> G1_3{门禁 G1.3<br/>内部引用一致?}
     APIS --> G1_3
     MODELS --> G1_3
+    DEP_GRAPH --> G1_3
     
     G1_3 -->|否| FIX_REF[修复引用]
     FIX_REF --> INTEGRATE
-    G1_3 -->|是| INFER[1.4 需求反向推断<br/>brainstorming]
+    G1_3 -->|是| INFER[1.2.5 需求反向推断<br/>brainstorming]
     
     INFER --> REQ_DOCS[生成基线需求文档<br/>requirements/baseline/]
-    REQ_DOCS --> G1_4{门禁 G1.4<br/>需求覆盖率 >= 90%?}
+    REQ_DOCS --> G1_4{门禁 G1.4<br/>core/admin 功能全覆盖?}
     G1_4 -->|否| LOW_CONF[标记低置信度需求]
     LOW_CONF --> G1_5
     G1_4 -->|是| G1_5{门禁 G1.5<br/>阶段一总门禁}
     
-    G1_5 -->|通过| COMMIT1[Git Commit<br/>[devloop] stage:1]
+    G1_5 -->|通过| COMMIT1[1.2.7 Git Commit<br/>[devloop] stage:1]
     COMMIT1 --> DONE1([阶段一完成])
     G1_5 -->|失败| REPORT1[生成失败报告]
     REPORT1 --> PAUSE1([暂停: 等待人工处理])
     
+    style G1_0 fill:#4ecdc4,stroke:#2c9c94,color:#fff
     style G1_1 fill:#ffd43b,stroke:#fab005
     style G1_2 fill:#ffd43b,stroke:#fab005
     style G1_3 fill:#ffd43b,stroke:#fab005

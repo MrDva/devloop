@@ -1,12 +1,13 @@
 ---
-module: {{ module_name }}
+business_function: {{ business_function_name }}
+category: {{ category }}
 source: auto-generated
 confidence: {{ confidence }}
 drift_score: {{ drift_score }}
 last_updated: {{ last_updated }}
 ---
 
-# {{ module_name }} — 业务逻辑
+# {{ business_function_name }} — 业务逻辑
 
 ## 核心流程
 {{#each core_flows}}
@@ -34,13 +35,21 @@ last_updated: {{ last_updated }}
 - {{ this }}
 {{/each}}
 
+## 共享文件角色声明
+{{#each shared_files}}
+- **`{{ this.file }}`**: {{ this.role }}
+  - 同时被以下功能使用: {{#each this.also_in}}`{{ this }}` {{/each}}
+{{/each}}
+
 ---
 <!-- Variables:
-  module_name — module name
+  business_function_name — semantic business function name
+  category — classification label per project type
   confidence — 0.0 - 1.0
   drift_score — 0.0 - 1.0
   last_updated — ISO 8601 timestamp
   core_flows — list of {name, trigger, preconditions, steps[], postconditions, exceptions[]}
   business_rules — list of {name, rule}
   side_effects — list of strings
+  shared_files — list of {file, role, also_in[]}
 -->

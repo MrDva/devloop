@@ -4,7 +4,8 @@ title: {{ title }}
 type: {{ type }}
 priority: {{ priority }}
 status: {{ status }}
-module: {{ primary_module }}
+module: {{ primary_module }}             # 旧模块名或新业务功能名（或 "devloop-framework"）
+business_function: {{ business_function }}     # 🆕 v2: 关联的业务功能名（v1 中为空）
 source: {{ source }}
 usage_restriction: {{ usage_restriction }}
 kb_context:
