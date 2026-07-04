@@ -207,6 +207,27 @@ naming_prefixes:
 
 **阈值**: 加权总分 ≥ 4.0 分配到业务功能。共享文件（归属 >1 功能，如 `logging/service.ts` 同时属于 login-audit-logging 和 data-cleanup）显式标注角色。
 
+##### Phase 6b: 缺口填补（基础设施/基础层兜底）🆕 实证验证
+
+> **实证发现** (2026-07-04): 在实际 Express+TypeScript 项目上测试，Phase 6 加权投票后仅 44%（7/16）文件达到 4.0 阈值。基础设施文件（middleware、error handler、rate limiter）因无种子信号，得分仅 1.0-3.0。增加 Phase 6b 后覆盖率提升至 94%（15/16），孤儿文件 1 个。
+
+**前置规则 — 共享基础层自动检测**（在所有 gap-fill 之前执行）：
+
+1. 被 ≥ 4 个不同 BF 导入的**纯类型/配置文件**（无函数导出）→ `shared_foundations`，confidence 0.99（如 `config.ts`、`types.ts`）
+2. 被 ≥ 3 个不同 BF 调用 **且** 命名信号指向 foundation BF → 分配到命名信号指向的 foundation BF，而非调用图占优的 BF（如 `db/connection.ts` → database-management）
+3. 被 ≥ 4 个不同 BF 调用的通用工具文件 → `shared_foundations`，confidence 0.90
+
+**兜底规则**:
+
+| 剩余信号组合 | 动作 | confidence |
+|------------|------|------------|
+| naming + import_proximity ≥ 2 个导入者 | 分配到命名提示的 BF | 0.80-0.90 |
+| naming only (≥ 1.0) | 分配到命名提示的 BF | 0.70-0.80 |
+| call_graph only（被多个 BF 调用） | 分配到 `shared_foundations` | 0.60-0.70 |
+| 无任何信号 | 标记为 orphan | — |
+
+此步骤确保 `rate-limiting`、`error-handling`、`request-tracing`、`data-cleanup`、`database-management` 等无种子 BF 能被正确识别。
+
 ##### Phase 7: 分类（体系自适应）
 
 根据 1.2.1 选择的分类体系为每个业务功能打标签。分类体系因项目类型而异，但聚类结果本身不受影响。
